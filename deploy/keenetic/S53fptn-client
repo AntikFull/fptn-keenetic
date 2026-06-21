@@ -1,0 +1,32 @@
+#!/bin/sh
+
+ENABLED=no
+PROCS=/opt/bin/fptn-client-cli
+DESC="fptn-client"
+CONF=/opt/etc/fptn-client.conf
+
+if [ -f $CONF ]; then
+    . $CONF
+fi
+
+if [ "$ENABLED" != "yes" ]; then
+    exit 0
+fi
+
+# Проверяем обязательные параметры
+if [ -z "$TOKEN" ]; then
+    echo "FPTN token is empty in $CONF"
+    exit 1
+fi
+
+# Строим аргументы
+ARGS="--access-token $TOKEN --tun-interface-name ${TUN_INTERFACE:-opkgtun1} --disable-routing"
+
+if [ -n "$PREFERRED_SERVER" ]; then
+    ARGS="$ARGS --preferred-server $PREFERRED_SERVER"
+fi
+
+PREARGS=""
+PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+. /opt/etc/init.d/rc.func

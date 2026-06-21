@@ -1,0 +1,234 @@
+#!/bin/sh
+# Интерактивный установщик FPTN-клиента для Keenetic (Entware)
+# Автор: Antigravity
+# Все комментарии и вывод на русском языке
+
+set -e
+
+echo "==========================================================="
+echo "  Установка FPTN-клиента и веб-панели для Keenetic (Entware)"
+echo "==========================================================="
+echo ""
+
+# 1. Проверка среды Entware
+if [ ! -d "/opt/etc" ] || [ ! -x "/opt/bin/opkg" ]; then
+    echo "Ошибка: Среда Entware не найдена на роутере!"
+    echo "Убедитесь, что Entware установлен и работает (директория /opt доступна)."
+    exit 1
+fi
+
+# 2. Интерактивный опрос параметров
+# Пытаемся определить текущий порт веб-сервера lighttpd
+DEFAULT_PORT=8088
+if [ -f "/opt/etc/lighttpd/conf.d/80-nfqws.conf" ]; then
+    NFQWS_PORT=$(grep -oE "server.port := [0-9]+" /opt/etc/lighttpd/conf.d/80-nfqws.conf | awk '{print $3}')
+    if [ -n "$NFQWS_PORT" ]; then
+        DEFAULT_PORT=$NFQWS_PORT
+    fi
+fi
+
+printf "Введите порт для веб-панели FPTN (по умолчанию %s): " "$DEFAULT_PORT"
+read -r USER_PORT
+USER_PORT=${USER_PORT:-$DEFAULT_PORT}
+
+DEFAULT_KTUN="OpkgTun1"
+printf "Введите имя интерфейса в KeeneticOS (по умолчанию %s): " "$DEFAULT_KTUN"
+read -r USER_KTUN
+USER_KTUN=${USER_KTUN:-$DEFAULT_KTUN}
+
+DEFAULT_LTUN="opkgtun1"
+printf "Введите имя интерфейса в Linux/TUN (по умолчанию %s): " "$DEFAULT_LTUN"
+read -r USER_LTUN
+USER_LTUN=${USER_LTUN:-$DEFAULT_LTUN}
+
+printf "Введите токен подписки FPTN (опционально, можно ввести позже в панели): "
+read -r USER_TOKEN
+
+echo ""
+echo "Параметры установки:"
+echo "  Веб-порт:               $USER_PORT"
+echo "  Интерфейс KeeneticOS:   $USER_KTUN"
+echo "  Интерфейс Linux TUN:    $USER_LTUN"
+if [ -n "$USER_TOKEN" ]; then
+    echo "  Токен подписки:         [Указан]"
+else
+    echo "  Токен подписки:         [Не указан, введите позже]"
+fi
+echo ""
+printf "Продолжить установку? (y/n, по умолчанию y): "
+read -r CONFIRM
+CONFIRM=${CONFIRM:-y}
+if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
+    echo "Установка отменена."
+    exit 0
+fi
+
+# 3. Установка необходимых системных пакетов
+echo ""
+echo "[1/7] Обновление пакетов и установка зависимостей..."
+opkg update
+opkg install lighttpd php8-cgi php8-mod-openssl curl ca-bundle ca-certificates
+
+# 4. Автоопределение архитектуры и скачивание бинарника fptn-client-cli
+echo ""
+echo "[2/7] Определение архитектуры процессора..."
+RAW_ARCH=$(uname -m)
+case "$RAW_ARCH" in
+    aarch64)
+        ARCH_SUFFIX="aarch64"
+        ;;
+    armv7*)
+        ARCH_SUFFIX="armv7"
+        ;;
+    mips*el)
+        ARCH_SUFFIX="mipsel"
+        ;;
+    *)
+        echo "Ошибка: Неподдерживаемая архитектура процессора: $RAW_ARCH"
+        echo "Вам необходимо собрать бинарный файл fptn-client-cli вручную."
+        exit 1
+        ;;
+esac
+
+echo "Архитектура процессора: $RAW_ARCH ($ARCH_SUFFIX)"
+echo "Скачивание скомпилированного бинарника..."
+
+DOWNLOAD_URL="https://github.com/AntikFull/fptn/releases/download/v1.0.0-keenetic/fptn-client-cli-${ARCH_SUFFIX}"
+if ! curl -L -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
+    echo "Ошибка: Не удалось скачать бинарный файл по адресу: $DOWNLOAD_URL"
+    echo "Проверьте интернет-соединение или доступность релиза на GitHub."
+    exit 1
+fi
+chmod +x /opt/bin/fptn-client-cli
+
+# 5. Создание и настройка TUN-интерфейса в KeeneticOS
+echo ""
+echo "[3/7] Регистрация интерфейса $USER_KTUN в KeeneticOS..."
+if ! which ndmc >/dev/null 2>&1; then
+    echo "Внимание: Утилита ndmc CLI не найдена. Настройка интерфейса пропускается."
+    echo "Вам потребуется вручную настроить интерфейс в CLI Keenetic."
+else
+    # Проверяем, существует ли уже этот интерфейс
+    if ndmc -c "show interface $USER_KTUN" >/dev/null 2>&1; then
+        echo "Интерфейс $USER_KTUN уже существует в системе."
+    else
+        echo "Создание интерфейса $USER_KTUN типа OpkgTun..."
+        ndmc -c "interface $USER_KTUN type OpkgTun"
+    fi
+    
+    # Настройка параметров интерфейса
+    ndmc -c "interface $USER_KTUN description Fptn"
+    ndmc -c "interface $USER_KTUN security-level public"
+    ndmc -c "interface $USER_KTUN ip address 10.0.0.1 255.255.255.255"
+    ndmc -c "interface $USER_KTUN ip global 50000"
+    ndmc -c "interface $USER_KTUN ip tcp adjust-mss pmtu"
+    ndmc -c "interface $USER_KTUN up"
+    ndmc -c "system configuration save"
+    echo "Интерфейс $USER_KTUN успешно настроен в KeeneticOS."
+fi
+
+# 6. Настройка веб-сервера Lighttpd
+echo ""
+echo "[4/7] Настройка конфигурации веб-сервера Lighttpd..."
+LIGHTTPD_CONF_DIR="/opt/etc/lighttpd/conf.d"
+mkdir -p "$LIGHTTPD_CONF_DIR"
+
+# Определяем, является ли порт глобальным в lighttpd.conf
+GLOBAL_PORT=80
+if [ -f "/opt/etc/lighttpd/lighttpd.conf" ]; then
+    CONF_PORT=$(grep -oE "server.port\s*=\s*[0-9]+" /opt/etc/lighttpd/lighttpd.conf | tr -d ' ' | cut -d'=' -f2)
+    if [ -n "$CONF_PORT" ]; then
+        GLOBAL_PORT=$CONF_PORT
+    fi
+fi
+# Проверяем также nfqws_port
+if [ -f "/opt/etc/lighttpd/conf.d/80-nfqws.conf" ]; then
+    NFQWS_PORT=$(grep -oE "server.port\s*:=\s*[0-9]+" /opt/etc/lighttpd/conf.d/80-nfqws.conf | tr -d ' ' | cut -d':' -f2 | cut -d'=' -f2)
+    if [ -n "$NFQWS_PORT" ]; then
+        GLOBAL_PORT=$NFQWS_PORT
+    fi
+fi
+
+# Если выбранный порт совпадает с текущим глобальным, то привязываем просто по URL
+if [ "$USER_PORT" -eq "$GLOBAL_PORT" ]; then
+    cat << 'EOF' > "$LIGHTTPD_CONF_DIR/85-fptn.conf"
+# Настройки веб-интерфейса FPTN
+$HTTP["url"] =~ "^/fptn/" {
+    cgi.assign = ( ".php" => "/opt/bin/php-cgi" )
+    static-file.exclude-extensions += ( ".php" )
+}
+EOF
+else
+    # Если порт другой, вешаем на отдельный сокет
+    cat << EOF > "$LIGHTTPD_CONF_DIR/85-fptn.conf"
+# Настройки веб-интерфейса FPTN на кастомном порту $USER_PORT
+\$SERVER["socket"] == ":$USER_PORT" {
+    \$HTTP["url"] =~ "^/fptn/" {
+        cgi.assign = ( ".php" => "/opt/bin/php-cgi" )
+        static-file.exclude-extensions += ( ".php" )
+    }
+}
+EOF
+fi
+
+echo "Перезапуск веб-сервера Lighttpd..."
+/opt/etc/init.d/S80lighttpd restart || echo "Предупреждение: Не удалось перезапустить Lighttpd. Сделайте это вручную."
+
+# 7. Установка файлов веб-панели
+echo ""
+echo "[5/7] Копирование файлов веб-панели..."
+WWW_DIR="/opt/share/www/fptn"
+mkdir -p "$WWW_DIR"
+
+SCRIPT_DIR=$(dirname "$0")
+# Если файлы запускаются локально из репозитория
+if [ -f "$SCRIPT_DIR/index.php" ]; then
+    cp "$SCRIPT_DIR/index.php" "$WWW_DIR/index.php"
+else
+    # Иначе скачиваем из GitHub
+    curl -L -o "$WWW_DIR/index.php" "https://raw.githubusercontent.com/AntikFull/fptn/master/deploy/keenetic/index.php"
+fi
+chmod 644 "$WWW_DIR/index.php"
+
+# 8. Создание файла конфигурации FPTN службы
+echo ""
+echo "[6/7] Создание файла конфигурации FPTN..."
+cat << EOF > /opt/etc/fptn-client.conf
+# Конфигурация клиента FPTN (Создано автоматически)
+ENABLED="no"
+TOKEN="$USER_TOKEN"
+PREFERRED_SERVER=""
+TUN_INTERFACE="$USER_LTUN"
+EOF
+chmod 600 /opt/etc/fptn-client.conf
+
+# 9. Установка init-скрипта автозапуска службы
+echo ""
+echo "[7/7] Настройка службы автозапуска..."
+if [ -f "$SCRIPT_DIR/S53fptn-client" ]; then
+    cp "$SCRIPT_DIR/S53fptn-client" "/opt/etc/init.d/S53fptn-client"
+else
+    curl -L -o "/opt/etc/init.d/S53fptn-client" "https://raw.githubusercontent.com/AntikFull/fptn/master/deploy/keenetic/S53fptn-client"
+fi
+chmod 755 /opt/etc/init.d/S53fptn-client
+
+echo ""
+echo "==========================================================="
+echo "             Установка успешно завершена!"
+echo "==========================================================="
+echo ""
+echo "  1. Веб-панель управления доступна по адресу:"
+echo "     http://192.168.1.1:$USER_PORT/fptn/"
+echo ""
+echo "  2. Чтобы запустить туннель:"
+echo "     - Откройте веб-панель FPTN."
+echo "     - Введите/проверьте токен подписки."
+echo "     - Выберите сервер и нажмите кнопку 'Запустить'."
+echo ""
+echo "  3. Маршрутизация трафика:"
+echo "     - В веб-интерфейсе Keenetic в разделе 'Приоритеты подключений'"
+echo "       появится новое подключение 'Fptn'."
+echo "     - Перетащите его в нужную политику маршрутизации."
+echo "     - Также вы можете настраивать DNS-маршруты доменов на интерфейс $USER_KTUN."
+echo ""
+echo "==========================================================="

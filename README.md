@@ -114,6 +114,30 @@ You can also deploy your own management and monitoring tools:
 
 </details>
 
+<details>
+  <summary><strong>Installing and Configuring FPTN on Keenetic (Entware)</strong></summary>
+
+You can install the FPTN client along with a convenient web control panel on your home Keenetic router using an interactive script.
+
+#### One-click Fast Installation
+Connect to your router via SSH and run the following command:
+```bash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/AntikFull/fptn/master/deploy/keenetic/install.sh)"
+```
+
+The script will automatically:
+1. Install required packages (`lighttpd`, `php8-cgi`, `curl`, etc.).
+2. Detect the router's processor architecture (`aarch64`, `armv7`, or `mipsel`) and download the appropriate static client binary.
+3. Prompt you for the interface name, port for the web panel (default `8088`), and subscription token.
+4. Create and configure a TUN interface in KeeneticOS (with `ip global` and TCP MSS adjustment) so the router treats it as a working internet connection.
+5. Configure the service autostart and the web server.
+
+After installation is complete, open the web panel at:
+`http://192.168.1.1:8088/fptn/`
+
+[Detailed instructions on setup and routing on Keenetic](deploy/keenetic/README.md).
+</details>
+
 
 
 
