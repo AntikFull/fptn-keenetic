@@ -8,13 +8,7 @@ else()
   set(TUNTAP_LIB Wintun rpcrt4 iphlpapi Kernel32.lib)
 endif()
 
-# Примечание: atomic для 32-бит (mipsel, armv7) добавляется в самом конце
-# target_link_libraries, после всех .a-зависимостей из Conan.
-if(UNIX AND NOT APPLE)
-  set(ATOMIC_TAIL_LIB atomic)
-else()
-  set(ATOMIC_TAIL_LIB "")
-endif()
+
 
 find_package(OpenSSL REQUIRED)
 find_package(argparse REQUIRED)
@@ -75,8 +69,15 @@ target_link_libraries(
           fptn-protocol-lib_static
           "${TUNTAP_LIB}"
           "${BROTLI_DEC_LIB}"
-          "${BROTLI_COMMON_LIB}"
-          "${ATOMIC_TAIL_LIB}")
+          "${BROTLI_COMMON_LIB}")
+
+# Добавляем -latomic в самый конец строки линковки через LINK_OPTIONS.
+# Это критично для 32-бит архитектур (mipsel, armv7), где libprotobuf,
+# libmimalloc и libabsl нуждаются в __atomic_fetch_add_8 / __atomic_compare_exchange_8.
+# target_link_libraries(atomic) не работает, т.к. CMake ставит его раньше Conan-зависимостей.
+if(UNIX AND NOT APPLE)
+  target_link_options("${PROJECT_NAME}-cli" PRIVATE "-Wl,--push-state,--whole-archive" "-latomic" "-Wl,--pop-state")
+endif()
 
 # fptn-client-gui
 if("${FPTN_BUILD_WITH_GUI_CLIENT}")
