@@ -27,6 +27,7 @@ if(UNIX AND NOT APPLE)
 else()
   set(PLATFORM_LIBS "")
 endif()
+message(STATUS "DEBUG PROTOCOL: PLATFORM_LIBS is '${PLATFORM_LIBS}', UNIX is '${UNIX}', APPLE is '${APPLE}'")
 
 find_package(absl REQUIRED)
 find_package(protobuf REQUIRED)

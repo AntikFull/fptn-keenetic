@@ -15,22 +15,22 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # - arch-name: aarch64
-          #   conan-arch: armv8
-          #   apt-packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          #   cc: aarch64-linux-gnu-gcc
-          #   cxx: aarch64-linux-gnu-g++
-          #   flags: '["-DOPENSSL_PTHREADS", "-pthread"]'
-          #   asmflags: "-DOPENSSL_PTHREADS -pthread"
-          #   linkflags: '[]'
-          # - arch-name: armv7
-          #   conan-arch: armv7
-          #   apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-          #   cc: arm-linux-gnueabihf-gcc
-          #   cxx: arm-linux-gnueabihf-g++
-          #   flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
-          #   asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
-          #   linkflags: '["-latomic"]'
+          - arch-name: aarch64
+            conan-arch: armv8
+            apt-packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            cc: aarch64-linux-gnu-gcc
+            cxx: aarch64-linux-gnu-g++
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv8-a", "-mno-outline-atomics"]'
+            asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv8-a"
+            linkflags: '[]'
+          - arch-name: armv7
+            conan-arch: armv7
+            apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
+            asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+            linkflags: '["-latomic"]'
           - arch-name: mipsel
             conan-arch: mips
             apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
@@ -87,7 +87,11 @@ jobs:
         run: |
           cd build
           cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-static -latomic"
-          cmake --build . --config Release --target fptn-client-cli -j$(nproc) -- VERBOSE=1
+          if ! cmake --build . --config Release --target fptn-client-cli -j$(nproc) -- VERBOSE=1; then
+            echo "=== CONTENT OF link.txt ==="
+            cat src/fptn-client/CMakeFiles/fptn-client-cli.dir/link.txt || true
+            exit 1
+          fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
