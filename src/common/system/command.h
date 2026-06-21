@@ -34,7 +34,8 @@ inline bool run(const std::string& command) {
         boost::process::v1::std_err > stderr,
         ::boost::process::v1::windows::hide);
 #elif defined(__linux__) || defined(__APPLE__)
-    boost::process::v1::child child(command,
+    boost::process::v1::child child("/bin/sh",
+        "-c", command,
         boost::process::v1::std_out > stdout,
         boost::process::v1::std_err > stderr);
 #endif
@@ -57,7 +58,7 @@ inline bool run(
     boost::process::v1::child child(command, boost::process::v1::std_out > pipe,
         ::boost::process::v1::windows::hide);
 #elif defined(__linux__) || defined(__APPLE__)
-    boost::process::v1::child child(boost::process::v1::search_path("sh"),
+    boost::process::v1::child child("/bin/sh",
         "-c", command, boost::process::v1::std_out > pipe);
 #endif
     std::string line;
