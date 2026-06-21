@@ -23,22 +23,22 @@ jobs:
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv8-a", "-mno-outline-atomics"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv8-a"
             linkflags: '[]'
-#          - arch-name: armv7
-#            conan-arch: armv7
-#            apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-#            cc: arm-linux-gnueabihf-gcc
-#            cxx: arm-linux-gnueabihf-g++
-#            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
-#            asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
-#            linkflags: '[]'
-#          - arch-name: mipsel
-#            conan-arch: mips
-#            apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
-#            cc: mipsel-linux-gnu-gcc
-#            cxx: mipsel-linux-gnu-g++
-#            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2", "-fcoroutines"]'
-#            asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
-#            linkflags: '[]'
+          - arch-name: armv7
+            conan-arch: armv7
+            apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+            cc: arm-linux-gnueabihf-gcc
+            cxx: arm-linux-gnueabihf-g++
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
+            asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+            linkflags: '[]'
+          - arch-name: mipsel
+            conan-arch: mips
+            apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
+            cc: mipsel-linux-gnu-gcc
+            cxx: mipsel-linux-gnu-g++
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2", "-fcoroutines"]'
+            asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
+            linkflags: '[]'
 
     steps:
       - name: Checkout code
