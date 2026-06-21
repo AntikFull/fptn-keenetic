@@ -65,7 +65,7 @@ jobs:
 
       - name: Install Conan Dependencies
         run: |
-          conan install . --output-folder=build --build=missing -pr:h=~/.conan2/profiles/${{ matrix.arch-name }}_cross -pr:b=default
+          conan install . --output-folder=build --build=missing -pr:h=${{ matrix.arch-name }}_cross -pr:b=default
 
       - name: Configure CMake and Build
         run: |
