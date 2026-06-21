@@ -21,18 +21,21 @@ jobs:
             cc: aarch64-linux-gnu-gcc
             cxx: aarch64-linux-gnu-g++
             flags: '["-DOPENSSL_PTHREADS", "-pthread"]'
+            asmflags: "-DOPENSSL_PTHREADS -pthread"
           - arch-name: armv7
             conan-arch: armv7
             apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
             cc: arm-linux-gnueabihf-gcc
             cxx: arm-linux-gnueabihf-g++
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
+            asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
           - arch-name: mipsel
             conan-arch: mips
             apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
             cc: mipsel-linux-gnu-gcc
             cxx: mipsel-linux-gnu-g++
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2"]'
+            asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
 
     steps:
       - name: Checkout code
@@ -62,11 +65,13 @@ jobs:
           compiler.cppstd=gnu17
           build_type=Release
 
+          [buildenv]
+          ASFLAGS=${{ matrix.asmflags }}
+
           [conf]
           tools.build:compiler_executables={"c": "${{ matrix.cc }}", "cpp": "${{ matrix.cxx }}"}
           tools.build:cflags=${{ matrix.flags }}
           tools.build:cxxflags=${{ matrix.flags }}
-          tools.build:asmflags=${{ matrix.flags }}
           EOF
 
       - name: Install Conan Dependencies
