@@ -86,7 +86,7 @@ jobs:
       - name: Configure CMake and Build
         run: |
           cd build
-          cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-static"
+          cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-static -latomic"
           cmake --build . --config Release --target fptn-client-cli -j$(nproc)
 
       - name: Upload Artifact
