@@ -72,6 +72,8 @@ jobs:
           tools.build:compiler_executables={"c": "${{ matrix.cc }}", "cpp": "${{ matrix.cxx }}"}
           tools.build:cflags=${{ matrix.flags }}
           tools.build:cxxflags=${{ matrix.flags }}
+          tools.build:exelinkflags=["-static"]
+          tools.build:sharedlinkflags=["-static"]
           EOF
 
       - name: Install Conan Dependencies
@@ -81,7 +83,7 @@ jobs:
       - name: Configure CMake and Build
         run: |
           cd build
-          cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+          cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-static"
           cmake --build . --config Release --target fptn-client-cli -j$(nproc)
 
       - name: Upload Artifact
