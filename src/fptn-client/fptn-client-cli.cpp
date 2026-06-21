@@ -5,6 +5,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 =============================================================================*/
 
 #include <iostream>
+#include <cstdlib>
 #include <nlohmann/json.hpp>
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -228,6 +229,24 @@ int main(int argc, char* argv[]) {
 
     if (fptn::logger::init("fptn-client-cli")) {
       SPDLOG_INFO("Application started successfully.");
+#if defined(__linux__) || defined(__APPLE__)
+      const char* path_env = std::getenv("PATH");
+      std::string new_path = path_env ? std::string(path_env) : "";
+      std::vector<std::string> standard_paths = {
+          "/opt/sbin", "/opt/bin", "/usr/local/sbin", "/usr/local/bin",
+          "/usr/sbin", "/usr/bin", "/sbin", "/bin"
+      };
+      for (const auto& p : standard_paths) {
+        if (new_path.find(p) == std::string::npos) {
+          if (!new_path.empty()) {
+            new_path += ":";
+          }
+          new_path += p;
+        }
+      }
+      setenv("PATH", new_path.c_str(), 1);
+      SPDLOG_INFO("Set PATH to: {}", new_path);
+#endif
     } else {
       std::cerr << "Logger initialization failed. Exiting application."
                 << std::endl;
