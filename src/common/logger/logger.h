@@ -7,6 +7,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #pragma once
 
 #include <clocale>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -40,7 +41,11 @@ inline bool init(const std::string& app_name) {
   std::wcout.imbue(std::locale(".UTF-8"));
 #endif
   std::locale::global(std::locale::classic());
-  setlocale(LC_ALL, "en_US.UTF-8");
+#ifndef _WIN32
+  ::setenv("LC_ALL", "C", 1);
+  ::setenv("LANG", "C", 1);
+#endif
+  setlocale(LC_ALL, "C");
   try {
 #ifdef __ANDROID__
     auto logger = spdlog::android_logger_mt("android", app_name);
