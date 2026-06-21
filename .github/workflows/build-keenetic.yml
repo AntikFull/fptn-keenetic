@@ -23,22 +23,22 @@ jobs:
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv8-a", "-mno-outline-atomics"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv8-a"
             linkflags: '[]'
-          - arch-name: armv7
-            conan-arch: armv7
-            apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
-            cc: arm-linux-gnueabihf-gcc
-            cxx: arm-linux-gnueabihf-g++
-            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
-            asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
-            linkflags: '[]'
-          - arch-name: mipsel
-            conan-arch: mips
-            apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
-            cc: mipsel-linux-gnu-gcc
-            cxx: mipsel-linux-gnu-g++
-            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2", "-fcoroutines"]'
-            asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
-            linkflags: '[]'
+#          - arch-name: armv7
+#            conan-arch: armv7
+#            apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+#            cc: arm-linux-gnueabihf-gcc
+#            cxx: arm-linux-gnueabihf-g++
+#            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
+#            asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
+#            linkflags: '[]'
+#          - arch-name: mipsel
+#            conan-arch: mips
+#            apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
+#            cc: mipsel-linux-gnu-gcc
+#            cxx: mipsel-linux-gnu-g++
+#            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2", "-fcoroutines"]'
+#            asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
+#            linkflags: '[]'
 
     steps:
       - name: Checkout code
@@ -55,9 +55,18 @@ jobs:
           sudo apt-get install -y build-essential cmake ninja-build pkg-config ${{ matrix.apt-packages }}
           pip install conan
 
+      - name: Cache Conan Packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.conan2/p
+          key: conan-${{ matrix.arch-name }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ matrix.arch-name }}-
+
       - name: Configure Conan profile
         run: |
           conan profile detect --force
+          echo 'set(MI_OPT_ARCH OFF CACHE BOOL "" FORCE)' > ~/.conan2/profiles/global_user_toolchain.cmake
           cat << 'EOF' > ~/.conan2/profiles/${{ matrix.arch-name }}_cross
           [settings]
           os=Linux
@@ -77,6 +86,7 @@ jobs:
           tools.build:cxxflags=${{ matrix.flags }}
           tools.build:exelinkflags=${{ matrix.linkflags }}
           tools.build:sharedlinkflags=${{ matrix.linkflags }}
+          tools.cmake.cmaketoolchain:user_toolchain=["/home/runner/.conan2/profiles/global_user_toolchain.cmake"]
           EOF
 
       - name: Install Conan Dependencies
