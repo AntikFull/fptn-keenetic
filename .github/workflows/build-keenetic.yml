@@ -20,19 +20,19 @@ jobs:
             apt-packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
             cc: aarch64-linux-gnu-gcc
             cxx: aarch64-linux-gnu-g++
-            flags: '["-DOPENSSL_PTHREADS"]'
+            flags: '["-DOPENSSL_PTHREADS", "-pthread"]'
           - arch-name: armv7
             conan-arch: armv7
             apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
             cc: arm-linux-gnueabihf-gcc
             cxx: arm-linux-gnueabihf-g++
-            flags: '["-DOPENSSL_PTHREADS", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
           - arch-name: mipsel
             conan-arch: mips
             apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
             cc: mipsel-linux-gnu-gcc
             cxx: mipsel-linux-gnu-g++
-            flags: '["-DOPENSSL_THREADS", "-DOPENSSL_PTHREADS", "-march=mips32r2"]'
+            flags: '["-DOPENSSL_THREADS", "-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2"]'
 
     steps:
       - name: Checkout code
