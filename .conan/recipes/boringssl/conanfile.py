@@ -64,6 +64,13 @@ class BoringSSLConan(ConanFile):
             "-Werror",
             "",
         )
+        # Fix namespace issue on MIPS where USE_NR_getrandom is not defined
+        replace_in_file(
+            self,
+            os.path.join(self.source_folder, "crypto", "rand", "urandom.cc"),
+            '#include "internal.h"',
+            '#include "internal.h"\n\nusing namespace bssl;',
+        )
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
