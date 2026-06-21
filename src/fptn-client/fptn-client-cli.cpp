@@ -260,25 +260,31 @@ int main(int argc, char* argv[]) {
             args.get<std::string>("--tun-interface-ipv6"));
     const auto sni = args.get<std::string>("--sni");
 
+    const bool disable_routing = args.get<bool>("--disable-routing");
+
     /* check gateway address */
-    const auto using_gateway_ip =
-        gateway_ip.IsEmpty()
-            ? fptn::routing::GetDefaultGatewayIPAddress()
-            : fptn::common::network::IPv4Address::Create(gateway_ip);
-    const auto using_gateway_ipv6 =
-        gateway_ipv6.IsEmpty()
-            ? fptn::routing::GetDefaultGatewayIPv6Address()
-            : fptn::common::network::IPv6Address::Create(gateway_ipv6);
-    if (using_gateway_ip.IsEmpty()) {
-      SPDLOG_ERROR(
-          "Unable to find the default gateway IP address. "
-          "Please check your connection and make sure no other VPN is active. "
-          "If the error persists, specify the gateway address in the FPTN "
-          "settings using your router's IP "
-          "address with the \"--gateway-ip\" option. If the issue "
-          "remains unresolved, please contact the developer via Telegram "
-          "@fptn_chat.");
-      return EXIT_FAILURE;
+    fptn::common::network::IPv4Address using_gateway_ip;
+    fptn::common::network::IPv6Address using_gateway_ipv6;
+    if (!disable_routing) {
+      using_gateway_ip =
+          gateway_ip.IsEmpty()
+              ? fptn::routing::GetDefaultGatewayIPAddress()
+              : fptn::common::network::IPv4Address::Create(gateway_ip);
+      using_gateway_ipv6 =
+          gateway_ipv6.IsEmpty()
+              ? fptn::routing::GetDefaultGatewayIPv6Address()
+              : fptn::common::network::IPv6Address::Create(gateway_ipv6);
+      if (using_gateway_ip.IsEmpty()) {
+        SPDLOG_ERROR(
+            "Unable to find the default gateway IP address. "
+            "Please check your connection and make sure no other VPN is active. "
+            "If the error persists, specify the gateway address in the FPTN "
+            "settings using your router's IP "
+            "address with the \"--gateway-ip\" option. If the issue "
+            "remains unresolved, please contact the developer via Telegram "
+            "@fptn_chat.");
+        return EXIT_FAILURE;
+      }
     }
 
     using fptn::protocol::https::CensorshipStrategy;
@@ -478,8 +484,8 @@ int main(int argc, char* argv[]) {
             .vpn_server_ip = server_ip,
             .dns_server_ipv4 = dns_server_ipv4,
             .dns_server_ipv6 = dns_server_ipv6,
-            .gateway_ipv4 = gateway_ip,
-            .gateway_ipv6 = gateway_ipv6,
+            .gateway_ipv4 = using_gateway_ip,
+            .gateway_ipv6 = using_gateway_ipv6,
             .exclude_networks = exclude_networks,
             .include_networks = include_networks
 #if _WIN32
@@ -504,8 +510,6 @@ int main(int argc, char* argv[]) {
           split_domains, route_manager, policy);
       client_plugins.push_back(std::move(split_tunnel_plugin));
     }
-
-    const bool disable_routing = args.get<bool>("--disable-routing");
 
     /* vpn client */
     fptn::vpn::VpnManager vpn_client(

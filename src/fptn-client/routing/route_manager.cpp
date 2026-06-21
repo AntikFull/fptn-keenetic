@@ -9,6 +9,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -1176,7 +1177,7 @@ fptn::common::network::IPv4Address ResolveDomain(const std::string& domain) {
 fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
   try {
 #ifdef __linux__
-    const std::string command = "ip route get 8.8.8.8 | awk '{print $3; exit}'";
+    const std::string command = "ip route get 8.8.8.8";
 #elif __APPLE__
     const std::string command =
         "route get 8.8.8.8 | grep gateway | awk '{print $2}' ";
@@ -1188,6 +1189,41 @@ fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
 #endif
     std::vector<std::string> cmd_stdout;
     fptn::common::system::command::run(command, cmd_stdout);
+
+#ifdef __linux__
+    for (const auto& line : cmd_stdout) {
+      std::stringstream ss(line);
+      std::string token;
+      std::vector<std::string> tokens;
+      while (ss >> token) {
+        tokens.push_back(token);
+      }
+      // 1. Ищем "via"
+      for (size_t i = 0; i < tokens.size(); ++i) {
+        if (tokens[i] == "via" && i + 1 < tokens.size()) {
+          std::string gw = tokens[i + 1];
+          std::erase_if(gw, [](char c) {
+            return !std::isalnum(c) && c != '.' && c != '-';
+          });
+          if (!gw.empty()) {
+            return ResolveDomain(gw);
+          }
+        }
+      }
+      // 2. Если "via" нет (PPPoE/PPP), ищем "src" в качестве фоллбэка
+      for (size_t i = 0; i < tokens.size(); ++i) {
+        if (tokens[i] == "src" && i + 1 < tokens.size()) {
+          std::string gw = tokens[i + 1];
+          std::erase_if(gw, [](char c) {
+            return !std::isalnum(c) && c != '.' && c != '-';
+          });
+          if (!gw.empty()) {
+            return ResolveDomain(gw);
+          }
+        }
+      }
+    }
+#else
     for (const auto& line : cmd_stdout) {
       std::string result = line;
       result.erase(
@@ -1202,6 +1238,7 @@ fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
         return ResolveDomain(result);
       }
     }
+#endif
   } catch (const std::exception& ex) {
     SPDLOG_ERROR("Error: Failed to retrieve the default gateway IP address. {}",
         ex.what());
@@ -1212,8 +1249,7 @@ fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
 fptn::common::network::IPv6Address GetDefaultGatewayIPv6Address() {
   try {
 #ifdef __linux__
-    const std::string command =
-        "ip -6 route | grep default | head -1 | awk '{print $3}'";
+    const std::string command = "ip -6 route";
 #elif __APPLE__
     const std::string command =
         "route get -inet6 default | grep gateway | awk '{print $2}'";
@@ -1226,6 +1262,42 @@ fptn::common::network::IPv6Address GetDefaultGatewayIPv6Address() {
     std::vector<std::string> cmd_stdout;
     fptn::common::system::command::run(command, cmd_stdout);
 
+#ifdef __linux__
+    for (const auto& line : cmd_stdout) {
+      if (line.find("default") != std::string::npos) {
+        std::stringstream ss(line);
+        std::string token;
+        std::vector<std::string> tokens;
+        while (ss >> token) {
+          tokens.push_back(token);
+        }
+        // 1. Ищем "via"
+        for (size_t i = 0; i < tokens.size(); ++i) {
+          if (tokens[i] == "via" && i + 1 < tokens.size()) {
+            std::string gw = tokens[i + 1];
+            std::erase_if(gw, [](char c) {
+              return !std::isalnum(c) && c != ':' && c != '.' && c != '-';
+            });
+            if (!gw.empty()) {
+              return fptn::common::network::IPv6Address::Create(gw);
+            }
+          }
+        }
+        // 2. Если "via" нет, ищем "src" в качестве фоллбэка
+        for (size_t i = 0; i < tokens.size(); ++i) {
+          if (tokens[i] == "src" && i + 1 < tokens.size()) {
+            std::string gw = tokens[i + 1];
+            std::erase_if(gw, [](char c) {
+              return !std::isalnum(c) && c != ':' && c != '.' && c != '-';
+            });
+            if (!gw.empty()) {
+              return fptn::common::network::IPv6Address::Create(gw);
+            }
+          }
+        }
+      }
+    }
+#else
     for (const auto& line : cmd_stdout) {
       std::string result = line;
       std::erase_if(result, [](const char c) {
@@ -1235,6 +1307,7 @@ fptn::common::network::IPv6Address GetDefaultGatewayIPv6Address() {
         return fptn::common::network::IPv6Address::Create(result);
       }
     }
+#endif
   } catch (const std::exception& ex) {
     SPDLOG_ERROR("Error getting IPv6 gateway: {}", ex.what());
   }
@@ -1245,8 +1318,7 @@ std::string GetDefaultNetworkInterfaceName() {
   std::string result;
   try {
 #ifdef __linux__
-    const std::string command =
-        "ip route get 8.8.8.8 | awk '{print $5; exit}' ";
+    const std::string command = "ip route get 8.8.8.8";
 #elif __APPLE__
     const std::string command =
         "route get 8.8.8.8 | grep interface | awk '{print $2}' ";
@@ -1256,6 +1328,25 @@ std::string GetDefaultNetworkInterfaceName() {
 #endif
     std::vector<std::string> cmd_stdout;
     fptn::common::system::command::run(command, cmd_stdout);
+
+#ifdef __linux__
+    for (const auto& line : cmd_stdout) {
+      std::stringstream ss(line);
+      std::string token;
+      std::vector<std::string> tokens;
+      while (ss >> token) {
+        tokens.push_back(token);
+      }
+      for (size_t i = 0; i < tokens.size(); ++i) {
+        if (tokens[i] == "dev" && i + 1 < tokens.size()) {
+          result = tokens[i + 1];
+          result.erase(result.find_last_not_of(" \n\r\t") + 1);
+          result.erase(0, result.find_first_not_of(" \n\r\t"));
+          return result;
+        }
+      }
+    }
+#else
     if (cmd_stdout.empty()) {
       SPDLOG_WARN("Warning: Default gateway IP address not found.");
       return {};
@@ -1265,6 +1356,7 @@ std::string GetDefaultNetworkInterfaceName() {
       result.erase(result.find_last_not_of(" \n\r\t") + 1);
       result.erase(0, result.find_first_not_of(" \n\r\t"));
     }
+#endif
   } catch (const std::exception& ex) {
     SPDLOG_ERROR("Error: Failed to retrieve the default gateway IP address. {}",
         ex.what());
