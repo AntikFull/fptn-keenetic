@@ -58,6 +58,12 @@ class BoringSSLConan(ConanFile):
             "  install(TARGETS bssl)\n",
             "",
         )
+        replace_in_file(
+            self,
+            os.path.join(self.source_folder, "CMakeLists.txt"),
+            "-Werror",
+            "",
+        )
         cmake = CMake(self)
         cmake.configure()
         cmake.build()
