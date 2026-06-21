@@ -48,6 +48,17 @@ function write_config() {
 
 read_config();
 
+// Проверка статуса службы (вынесена выше для использования при обработке POST)
+$service_running = false;
+$pid = null;
+if (file_exists($cli_path)) {
+    exec("pgrep -f fptn-client-cli", $pids);
+    if (!empty($pids)) {
+        $service_running = true;
+        $pid = implode(", ", $pids);
+    }
+}
+
 // Обработка действий
 $message = '';
 $error = '';
@@ -81,6 +92,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $config['TOKEN'] = $token;
                             write_config();
                             $message = 'Токен успешно сохранен и проверен! Служба: ' . htmlspecialchars($parsed['service_name']);
+                            
+                            // Перезапуск службы для применения нового токена
+                            if ($service_running) {
+                                $cmd = $init_script . " restart 2>&1";
+                                exec($cmd, $restart_output, $restart_return);
+                                $message .= ' Служба автоматически перезапущена.';
+                            }
                         } else {
                             $error = 'Не удалось распарсить список серверов из ответа клиента.';
                         }
@@ -96,6 +114,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $config['PREFERRED_SERVER'] = $server;
             if (write_config()) {
                 $message = 'Предпочтительный сервер обновлен на: ' . ($server ? htmlspecialchars($server) : 'Автовыбор');
+                
+                // Перезапуск службы для применения выбранного сервера
+                if ($service_running) {
+                    $cmd = $init_script . " restart 2>&1";
+                    exec($cmd, $restart_output, $restart_return);
+                    $message .= ' Служба автоматически перезапущена.';
+                }
             } else {
                 $error = 'Не удалось записать конфигурацию.';
             }
@@ -121,16 +146,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
     // Перечитываем конфигурацию после записи
     read_config();
-}
-
-// Проверка статуса службы
-$service_running = false;
-$pid = null;
-if (file_exists($cli_path)) {
-    exec("pgrep -f fptn-client-cli", $pids);
-    if (!empty($pids)) {
-        $service_running = true;
-        $pid = implode(", ", $pids);
+    
+    // Переопределяем статус службы после возможных изменений
+    $service_running = false;
+    $pid = null;
+    if (file_exists($cli_path)) {
+        exec("pgrep -f fptn-client-cli", $pids);
+        if (!empty($pids)) {
+            $service_running = true;
+            $pid = implode(", ", $pids);
+        }
     }
 }
 
