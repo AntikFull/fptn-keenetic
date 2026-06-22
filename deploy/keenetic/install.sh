@@ -199,6 +199,8 @@ ENABLED="no"
 TOKEN="$USER_TOKEN"
 PREFERRED_SERVER=""
 TUN_INTERFACE="$USER_LTUN"
+export GOGC="10"
+export GOMEMLIMIT="25MiB"
 EOF
 chmod 600 /opt/etc/fptn-client.conf
 

@@ -14,7 +14,9 @@ $config = [
     'ENABLED' => 'no',
     'TOKEN' => '',
     'PREFERRED_SERVER' => '',
-    'TUN_INTERFACE' => 'opkgtun1'
+    'TUN_INTERFACE' => 'opkgtun1',
+    'GOGC' => '10',
+    'GOMEMLIMIT' => '25MiB'
 ];
 
 // Функция чтения конфигурации
@@ -24,7 +26,9 @@ function read_config() {
         $lines = file($conf_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
         foreach ($lines as $line) {
             if (strpos(trim($line), '#') === 0) continue;
-            $parts = explode('=', $line, 2);
+            // Убираем префикс export, если он есть
+            $line_clean = preg_replace('/^export\s+/', '', trim($line));
+            $parts = explode('=', $line_clean, 2);
             if (count($parts) == 2) {
                 $key = trim($parts[0]);
                 $val = trim($parts[1], " \t\n\r\0\x0B\"'");
@@ -41,7 +45,11 @@ function write_config() {
     global $conf_file, $config;
     $content = "# Конфигурация клиента FPTN (Создано автоматически)\n";
     foreach ($config as $k => $v) {
-        $content .= "{$k}=\"{$v}\"\n";
+        if ($k === 'GOGC' || $k === 'GOMEMLIMIT') {
+            $content .= "export {$k}=\"{$v}\"\n";
+        } else {
+            $content .= "{$k}=\"{$v}\"\n";
+        }
     }
     return file_put_contents($conf_file, $content) !== false;
 }
