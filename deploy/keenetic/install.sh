@@ -102,6 +102,15 @@ case "$RAW_ARCH" in
 esac
 
 echo "Архитектура процессора: $RAW_ARCH ($ARCH_SUFFIX)"
+
+# Останавливаем запущенную службу, чтобы избежать ошибки "Text file busy"
+if [ -x "/opt/etc/init.d/S53fptn-client" ]; then
+    echo "Остановка запущенной службы VPN перед обновлением бинарника..."
+    /opt/etc/init.d/S53fptn-client stop >/dev/null 2>&1
+    sleep 2
+    pkill -9 -f "/opt/bin/fptn-client-cli" >/dev/null 2>&1 || true
+fi
+
 echo "Скачивание скомпилированного бинарника..."
 
 DOWNLOAD_URL="${GITHUB_DL_BASE}/fptn-client-cli-${ARCH_SUFFIX}"
