@@ -1,10 +1,12 @@
 <?php
 // Веб-панель управления клиентом FPTN на Keenetic (Entware)
 // Автор: Antigravity
-// Исправлено: добавлены авторизация, защита от CSRF и маскирование токена
+// Исправлено: добавлены авторизация, защита от CSRF, маскирование токена и автообновление
 
 session_name('FPTN_SESS');
 session_start();
+
+define('CURRENT_VERSION', 'v1.0.1-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -12,6 +14,160 @@ $conf_file = "/opt/etc/fptn-client.conf";
 $servers_file = "/opt/etc/fptn-servers.json";
 $cli_path = "/opt/bin/fptn-client-cli";
 $init_script = "/opt/etc/init.d/S53fptn-client";
+
+// Проверяем состояние авторизации перед обработкой AJAX
+$authenticated = isset($_SESSION['auth']) && $_SESSION['auth'] === true;
+
+// Функция для выполнения HTTPS GET запросов без зависимости от расширения php-curl
+function http_get_contents($url, $timeout = 15) {
+    $options = [
+        'http' => [
+            'method' => 'GET',
+            'header' => "User-Agent: FPTN-Keenetic-Client\r\n",
+            'timeout' => $timeout,
+            'follow_location' => 1,
+            'ignore_errors' => true
+        ],
+        'ssl' => [
+            'verify_peer' => false,
+            'verify_peer_name' => false
+        ]
+    ];
+    $context = stream_context_create($options);
+    $data = @file_get_contents($url, false, $context);
+    
+    $code = 0;
+    if (isset($http_response_header) && is_array($http_response_header)) {
+        if (preg_match('/HTTP\/\d\.\d\s+(\d+)/', $http_response_header[0], $matches)) {
+            $code = (int)$matches[1];
+        }
+    }
+    return ['code' => $code, 'data' => $data];
+}
+
+// Обработка AJAX запросов (проверка обновлений и запуск обновления)
+if (isset($_GET['ajax']) && $authenticated) {
+    header('Content-Type: application/json');
+    $ajax_action = $_GET['ajax'];
+    
+    if ($ajax_action === 'check_update') {
+        $res = http_get_contents('https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt', 5);
+        
+        if ($res['code'] === 200 && !empty($res['data'])) {
+            $remote_version = trim($res['data']);
+            // Сравниваем версии без префикса 'v' и суффикса '-keenetic'
+            $v_remote = preg_replace('/[^0-9\.]/', '', $remote_version);
+            $v_current = preg_replace('/[^0-9\.]/', '', CURRENT_VERSION);
+            $has_update = (version_compare($v_remote, $v_current) > 0);
+            
+            echo json_encode([
+                'success' => true,
+                'current_version' => CURRENT_VERSION,
+                'remote_version' => $remote_version,
+                'has_update' => $has_update
+            ]);
+        } else {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Не удалось получить данные о версии с GitHub (HTTP ' . $res['code'] . ').'
+            ]);
+        }
+        exit;
+    }
+    
+    if ($ajax_action === 'install_update') {
+        // Проверка CSRF
+        if (!isset($_GET['csrf_token']) || $_GET['csrf_token'] !== $_SESSION['csrf_token']) {
+            echo json_encode(['success' => false, 'message' => 'Ошибка безопасности: неверный CSRF токен.']);
+            exit;
+        }
+        
+        // Определение архитектуры роутера
+        $arch = trim(shell_exec('uname -m'));
+        switch ($arch) {
+            case 'aarch64':
+                $arch_suffix = 'aarch64';
+                break;
+            case 'armv7l':
+            case 'armv7':
+                $arch_suffix = 'armv7';
+                break;
+            case 'mips':
+            case 'mipsel':
+                $arch_suffix = 'mipsel';
+                break;
+            default:
+                echo json_encode(['success' => false, 'message' => 'Неподдерживаемая архитектура процессора: ' . $arch]);
+                exit;
+        }
+        
+        // Получение актуального тега версии с GitHub
+        $res_ver = http_get_contents('https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt', 5);
+        $remote_version = ($res_ver['code'] === 200) ? trim($res_ver['data']) : '';
+        
+        if (empty($remote_version)) {
+            echo json_encode(['success' => false, 'message' => 'Не удалось определить версию релиза для скачивания бинарников.']);
+            exit;
+        }
+        
+        $bin_url = "https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
+        $php_url = "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php";
+        
+        $tmp_bin = "/tmp/fptn-client-cli.tmp";
+        $tmp_php = "/tmp/index.php.tmp";
+        
+        // Скачивание бинарника
+        $res_bin = http_get_contents($bin_url, 60);
+        if ($res_bin['code'] !== 200 || empty($res_bin['data'])) {
+            echo json_encode(['success' => false, 'message' => "Не удалось скачать бинарный файл с GitHub Releases: HTTP {$res_bin['code']}"]);
+            exit;
+        }
+        file_put_contents($tmp_bin, $res_bin['data']);
+        chmod($tmp_bin, 0755);
+        
+        // Скачивание PHP панели
+        $res_php = http_get_contents($php_url, 20);
+        if ($res_php['code'] !== 200 || empty($res_php['data'])) {
+            @unlink($tmp_bin);
+            echo json_encode(['success' => false, 'message' => "Не удалось скачать новую веб-панель index.php: HTTP {$res_php['code']}"]);
+            exit;
+        }
+        file_put_contents($tmp_php, $res_php['data']);
+        
+        // 1. Останавливаем службу
+        exec("{$init_script} stop 2>&1");
+        
+        // 2. Перемещаем бинарник
+        if (!rename($tmp_bin, $cli_path)) {
+            @unlink($tmp_bin);
+            @unlink($tmp_php);
+            echo json_encode(['success' => false, 'message' => 'Не удалось перезаписать файл клиента /opt/bin/fptn-client-cli. Проверьте права доступа.']);
+            exit;
+        }
+        chmod($cli_path, 0755);
+        
+        // 3. Перечитываем конфигурацию и запускаем службу, если она должна быть включена
+        // Читаем вручную конфигурационный файл
+        $enabled = 'no';
+        if (file_exists($conf_file)) {
+            $lines = file($conf_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            foreach ($lines as $line) {
+                if (preg_match('/^ENABLED="?(yes|no)"?/', trim($line), $m)) {
+                    $enabled = $m[1];
+                }
+            }
+        }
+        if ($enabled === 'yes') {
+            exec("{$init_script} start 2>&1");
+        }
+        
+        // 4. Заменяем саму себя в последнюю очередь
+        rename($tmp_php, "/opt/share/www/fptn/index.php");
+        
+        echo json_encode(['success' => true, 'message' => 'Обновление успешно установлено!']);
+        exit;
+    }
+}
 
 // Инициализация дефолтных значений (убрали Go-переменные)
 $config = [
@@ -518,6 +674,10 @@ if (file_exists($servers_file)) {
             from { opacity: 0; transform: translateY(-5px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
     <script>
         function toggleVisibility(inputId, btnId) {
@@ -529,6 +689,78 @@ if (file_exists($servers_file)) {
             } else {
                 input.type = 'password';
                 btn.textContent = '👁️ Показать';
+            }
+        }
+
+        async function checkUpdates() {
+            const btn = document.getElementById('check-update-btn');
+            const statusBlock = document.getElementById('update-status-block');
+            btn.disabled = true;
+            btn.textContent = '⌛ Проверка...';
+            statusBlock.style.display = 'none';
+            
+            try {
+                const response = await fetch('?ajax=check_update');
+                const data = await response.json();
+                if (data.success) {
+                    if (data.has_update) {
+                        statusBlock.innerHTML = `
+                            <div style="color: var(--accent-yellow); font-weight: 600; margin-bottom: 6px;">Доступно обновление: ${data.remote_version}</div>
+                            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">Текущая версия: ${data.current_version}</div>
+                            <button type="button" class="btn btn-success btn-sm btn-full" onclick="installUpdate()">🚀 Установить обновление</button>
+                        `;
+                    } else {
+                        statusBlock.innerHTML = `
+                            <div style="color: var(--accent-green); font-weight: 500;">У вас последняя версия!</div>
+                        `;
+                    }
+                    statusBlock.style.display = 'block';
+                } else {
+                    alert(data.message || 'Ошибка проверки обновлений');
+                }
+            } catch (e) {
+                alert('Сбой сети при проверке обновлений');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔄 Проверить';
+            }
+        }
+
+        async function installUpdate() {
+            if (!confirm('Вы уверены, что хотите обновить клиент и панель? Служба VPN будет временно перезапущена.')) {
+                return;
+            }
+            const statusBlock = document.getElementById('update-status-block');
+            statusBlock.innerHTML = `
+                <div style="color: var(--accent-blue); font-weight: 600; text-align: center;">
+                    <span style="display: inline-block; animation: spin 1s linear infinite; margin-right: 8px;">⏳</span>
+                    Установка обновления... Пожалуйста, не закрывайте вкладку.
+                </div>
+            `;
+            
+            try {
+                const csrfToken = '<?php echo $_SESSION['csrf_token']; ?>';
+                const response = await fetch('?ajax=install_update&csrf_token=' + encodeURIComponent(csrfToken));
+                const data = await response.json();
+                if (data.success) {
+                    statusBlock.innerHTML = `
+                        <div style="color: var(--accent-green); font-weight: 600; text-align: center; margin-bottom: 8px;">🎉 ${data.message}</div>
+                    `;
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2500);
+                } else {
+                    statusBlock.innerHTML = `
+                        <div style="color: var(--accent-red); font-weight: 600; margin-bottom: 8px;">❌ Ошибка:</div>
+                        <div style="font-size: 12px;">${data.message}</div>
+                        <button type="button" class="btn btn-secondary btn-sm btn-full" style="margin-top: 10px;" onclick="checkUpdates()">Попробовать снова</button>
+                    `;
+                }
+            } catch (e) {
+                statusBlock.innerHTML = `
+                    <div style="color: var(--accent-red); font-weight: 600; margin-bottom: 8px;">❌ Ошибка соединения:</div>
+                    <div style="font-size: 12px;">Связь с роутером была разорвана во время обновления. Подождите 10-15 секунд и перезагрузите страницу вручную.</div>
+                `;
             }
         }
     </script>
@@ -578,7 +810,7 @@ if (file_exists($servers_file)) {
             <!-- Основной интерфейс управления (доступен только после авторизации) -->
             <header>
                 <div>
-                    <h1>Клиент FPTN</h1>
+                    <h1>Клиент FPTN <span style="font-size: 12px; font-weight: normal; color: var(--text-muted); background: var(--border-color); padding: 2px 8px; border-radius: 12px; margin-left: 8px; vertical-align: middle;"><?php echo CURRENT_VERSION; ?></span></h1>
                     <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Маршрутизируемый VPN-клиент на Keenetic/Entware</p>
                 </div>
                 <div style="display: flex; align-items: center; gap: 16px;">
@@ -626,6 +858,17 @@ if (file_exists($servers_file)) {
                     <div class="info-row">
                         <span class="info-label">PID процесса:</span>
                         <span class="info-value" style="font-family: monospace;"><?php echo $pid ? htmlspecialchars($pid) : '—'; ?></span>
+                    </div>
+
+                    <div class="info-row" style="margin-top: 16px; border-top: 1px dashed var(--border-color); padding-top: 16px;">
+                        <span class="info-label">Версия панели:</span>
+                        <span class="info-value">
+                            <?php echo CURRENT_VERSION; ?>
+                            <button type="button" id="check-update-btn" class="btn btn-secondary" style="padding: 2px 8px; font-size: 11px; margin-left: 8px; border-radius: 6px; display: inline-flex;" onclick="checkUpdates()">🔄 Проверить</button>
+                        </span>
+                    </div>
+                    <div id="update-status-block" style="margin-top: 12px; display: none; font-size: 13px; padding: 12px; border-radius: 10px; background: rgba(59, 130, 246, 0.05); border: 1px dashed var(--border-color);">
+                        <!-- Сюда вставляется статус обновления -->
                     </div>
 
                     <div class="btn-group" style="margin-top: 24px;">
