@@ -1,6 +1,10 @@
 <?php
 // Веб-панель управления клиентом FPTN на Keenetic (Entware)
 // Автор: Antigravity
+// Исправлено: добавлены авторизация, защита от CSRF и маскирование токена
+
+session_name('FPTN_SESS');
+session_start();
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -9,14 +13,13 @@ $servers_file = "/opt/etc/fptn-servers.json";
 $cli_path = "/opt/bin/fptn-client-cli";
 $init_script = "/opt/etc/init.d/S53fptn-client";
 
-// Инициализация дефолтных значений
+// Инициализация дефолтных значений (убрали Go-переменные)
 $config = [
     'ENABLED' => 'no',
     'TOKEN' => '',
     'PREFERRED_SERVER' => '',
     'TUN_INTERFACE' => 'opkgtun1',
-    'GOGC' => '10',
-    'GOMEMLIMIT' => '25MiB'
+    'WEB_PASSWORD' => '' // Хэш пароля для доступа к веб-панели
 ];
 
 // Функция чтения конфигурации
@@ -40,23 +43,19 @@ function read_config() {
     }
 }
 
-// Функция записи конфигурации
+// Функция записи конфигурации (без Go-переменных)
 function write_config() {
     global $conf_file, $config;
     $content = "# Конфигурация клиента FPTN (Создано автоматически)\n";
     foreach ($config as $k => $v) {
-        if ($k === 'GOGC' || $k === 'GOMEMLIMIT') {
-            $content .= "export {$k}=\"{$v}\"\n";
-        } else {
-            $content .= "{$k}=\"{$v}\"\n";
-        }
+        $content .= "{$k}=\"{$v}\"\n";
     }
     return file_put_contents($conf_file, $content) !== false;
 }
 
 read_config();
 
-// Проверка статуса службы (вынесена выше для использования при обработке POST)
+// Проверка статуса службы
 $service_running = false;
 $pid = null;
 if (file_exists($cli_path)) {
@@ -67,95 +66,146 @@ if (file_exists($cli_path)) {
     }
 }
 
-// Обработка действий
 $message = '';
 $error = '';
 
+// Генерация CSRF-токена, если он не задан
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
+// Флаги состояния авторизации
+$password_set = !empty($config['WEB_PASSWORD']);
+$authenticated = isset($_SESSION['auth']) && $_SESSION['auth'] === true;
+
+// Обработка POST-запросов
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (isset($_POST['action'])) {
         $action = $_POST['action'];
-        
-        if ($action === 'save_token') {
-            $token = trim($_POST['token']);
-            if (empty($token)) {
-                $error = 'Токен не может быть пустым';
+
+        // 1. Установка нового пароля (если он еще не задан)
+        if ($action === 'setup_password' && !$password_set) {
+            $new_pass = $_POST['password'] ?? '';
+            $confirm_pass = $_POST['confirm_password'] ?? '';
+            if (strlen($new_pass) < 6) {
+                $error = 'Пароль должен быть не менее 6 символов';
+            } elseif ($new_pass !== $confirm_pass) {
+                $error = 'Пароли не совпадают';
             } else {
-                // Проверяем токен с помощью бинарника fptn-client-cli
-                if (!file_exists($cli_path)) {
-                    $error = 'Клиент fptn-client-cli не найден в /opt/bin/. Сначала соберите и загрузите его.';
+                $config['WEB_PASSWORD'] = password_hash($new_pass, PASSWORD_BCRYPT);
+                if (write_config()) {
+                    $_SESSION['auth'] = true;
+                    header("Location: " . $_SERVER['PHP_SELF']);
+                    exit;
                 } else {
-                    $cmd = $cli_path . " --access-token " . escapeshellarg($token) . " --show-servers 2>&1";
-                    exec($cmd, $output, $return_var);
-                    
-                    if ($return_var === 0) {
-                        $json_str = implode("\n", $output);
-                        // Отсекаем логи spdlog, которые выводятся до JSON (начинаются с '{')
-                        $json_start = strpos($json_str, '{');
-                        if ($json_start !== false) {
-                            $json_str = substr($json_str, $json_start);
-                        }
-                        $parsed = json_decode($json_str, true);
-                        if ($parsed && isset($parsed['servers'])) {
-                            file_put_contents($servers_file, $json_str);
-                            $config['TOKEN'] = $token;
-                            write_config();
-                            $message = 'Токен успешно сохранен и проверен! Служба: ' . htmlspecialchars($parsed['service_name']);
-                            
-                            // Перезапуск службы для применения нового токена
-                            if ($service_running) {
-                                $cmd = $init_script . " restart 2>&1";
-                                exec($cmd, $restart_output, $restart_return);
-                                $message .= ' Служба автоматически перезапущена.';
-                            }
+                    $error = 'Не удалось записать пароль в конфигурацию.';
+                }
+            }
+        }
+
+        // 2. Вход (если пароль задан)
+        elseif ($action === 'login' && $password_set) {
+            $pass = $_POST['password'] ?? '';
+            if (password_verify($pass, $config['WEB_PASSWORD'])) {
+                $_SESSION['auth'] = true;
+                header("Location: " . $_SERVER['PHP_SELF']);
+                exit;
+            } else {
+                $error = 'Неверный пароль';
+            }
+        }
+
+        // 3. Выход из панели
+        elseif ($action === 'logout') {
+            unset($_SESSION['auth']);
+            session_destroy();
+            header("Location: " . $_SERVER['PHP_SELF']);
+            exit;
+        }
+
+        // 4. Действия, требующие авторизации и CSRF-валидации
+        elseif ($authenticated) {
+            // Валидация CSRF-токена
+            if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+                $error = 'Ошибка безопасности: неверный CSRF токен.';
+            } else {
+                if ($action === 'save_token') {
+                    $token = trim($_POST['token']);
+                    if (empty($token)) {
+                        $error = 'Токен не может быть пустым';
+                    } else {
+                        if (!file_exists($cli_path)) {
+                            $error = 'Клиент fptn-client-cli не найден в /opt/bin/. Сначала соберите и загрузите его.';
                         } else {
-                            $error = 'Не удалось распарсить список серверов из ответа клиента.';
+                            $cmd = $cli_path . " --access-token " . escapeshellarg($token) . " --show-servers 2>&1";
+                            exec($cmd, $output, $return_var);
+                            
+                            if ($return_var === 0) {
+                                $json_str = implode("\n", $output);
+                                $json_start = strpos($json_str, '{');
+                                if ($json_start !== false) {
+                                    $json_str = substr($json_str, $json_start);
+                                }
+                                $parsed = json_decode($json_str, true);
+                                if ($parsed && isset($parsed['servers'])) {
+                                    file_put_contents($servers_file, $json_str);
+                                    $config['TOKEN'] = $token;
+                                    write_config();
+                                    $message = 'Токен успешно сохранен и проверен! Служба: ' . htmlspecialchars($parsed['service_name']);
+                                    
+                                    if ($service_running) {
+                                        $cmd = $init_script . " restart 2>&1";
+                                        exec($cmd, $restart_output, $restart_return);
+                                        $message .= ' Служба автоматически перезапущена.';
+                                    }
+                                } else {
+                                    $error = 'Не удалось распарсить список серверов из ответа клиента.';
+                                }
+                            } else {
+                                $error = 'Ошибка проверки токена: ' . htmlspecialchars(implode(" ", $output));
+                            }
+                        }
+                    }
+                }
+                
+                elseif ($action === 'save_server') {
+                    $server = trim($_POST['server']);
+                    $config['PREFERRED_SERVER'] = $server;
+                    if (write_config()) {
+                        $message = 'Предпочтительный сервер обновлен на: ' . ($server ? htmlspecialchars($server) : 'Автовыбор');
+                        
+                        if ($service_running) {
+                            $cmd = $init_script . " restart 2>&1";
+                            exec($cmd, $restart_output, $restart_return);
+                            $message .= ' Служба автоматически перезапущена.';
                         }
                     } else {
-                        $error = 'Ошибка проверки токена: ' . htmlspecialchars(implode(" ", $output));
+                        $error = 'Не удалось записать конфигурацию.';
+                    }
+                }
+                
+                elseif (in_array($action, ['start', 'stop', 'restart'])) {
+                    if (!file_exists($init_script)) {
+                        $error = 'Скрипт управления службой /opt/etc/init.d/S53fptn-client не найден.';
+                    } else {
+                        if ($action === 'start') {
+                            $config['ENABLED'] = 'yes';
+                            write_config();
+                        } elseif ($action === 'stop') {
+                            $config['ENABLED'] = 'no';
+                            write_config();
+                        }
+                        
+                        $cmd = $init_script . " " . $action . " 2>&1";
+                        exec($cmd, $output, $return_var);
+                        $message = 'Выполнено действие: ' . $action . '. ' . htmlspecialchars(implode(" ", $output));
                     }
                 }
             }
         }
-        
-        if ($action === 'save_server') {
-            $server = trim($_POST['server']);
-            $config['PREFERRED_SERVER'] = $server;
-            if (write_config()) {
-                $message = 'Предпочтительный сервер обновлен на: ' . ($server ? htmlspecialchars($server) : 'Автовыбор');
-                
-                // Перезапуск службы для применения выбранного сервера
-                if ($service_running) {
-                    $cmd = $init_script . " restart 2>&1";
-                    exec($cmd, $restart_output, $restart_return);
-                    $message .= ' Служба автоматически перезапущена.';
-                }
-            } else {
-                $error = 'Не удалось записать конфигурацию.';
-            }
-        }
-        
-        if (in_array($action, ['start', 'stop', 'restart'])) {
-            if (!file_exists($init_script)) {
-                $error = 'Скрипт управления службой /opt/etc/init.d/S53fptn-client не найден.';
-            } else {
-                if ($action === 'start') {
-                    $config['ENABLED'] = 'yes';
-                    write_config();
-                } elseif ($action === 'stop') {
-                    $config['ENABLED'] = 'no';
-                    write_config();
-                }
-                
-                $cmd = $init_script . " " . $action . " 2>&1";
-                exec($cmd, $output, $return_var);
-                $message = 'Выполнено действие: ' . $action . '. ' . htmlspecialchars(implode(" ", $output));
-            }
-        }
     }
-    // Перечитываем конфигурацию после записи
+    // Перечитываем конфигурацию и статус
     read_config();
-    
-    // Переопределяем статус службы после возможных изменений
     $service_running = false;
     $pid = null;
     if (file_exists($cli_path)) {
@@ -322,11 +372,6 @@ if (file_exists($servers_file)) {
             transition: transform 0.2s ease, box-shadow 0.2s ease;
         }
         
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.3);
-        }
-        
         .card h2 {
             font-size: 18px;
             font-weight: 600;
@@ -355,6 +400,7 @@ if (file_exists($servers_file)) {
         
         .form-group {
             margin-bottom: 20px;
+            position: relative;
         }
         
         label {
@@ -365,7 +411,7 @@ if (file_exists($servers_file)) {
             font-weight: 500;
         }
         
-        input[type="text"], select {
+        input[type="text"], input[type="password"], select {
             width: 100%;
             background-color: var(--bg-color);
             border: 1px solid var(--border-color);
@@ -377,7 +423,7 @@ if (file_exists($servers_file)) {
             transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
         
-        input[type="text"]:focus, select:focus {
+        input[type="text"]:focus, input[type="password"]:focus, select:focus {
             outline: none;
             border-color: var(--accent-blue);
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
@@ -447,117 +493,204 @@ if (file_exists($servers_file)) {
         .btn-full {
             width: 100%;
         }
+
+        .auth-container {
+            max-width: 420px;
+            margin: 100px auto 0;
+        }
+
+        .toggle-btn {
+            position: absolute;
+            right: 12px;
+            top: 38px;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .toggle-btn:hover {
+            color: var(--text-color);
+        }
         
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(-5px); }
             to { opacity: 1; transform: translateY(0); }
         }
     </style>
+    <script>
+        function toggleVisibility(inputId, btnId) {
+            const input = document.getElementById(inputId);
+            const btn = document.getElementById(btnId);
+            if (input.type === 'password') {
+                input.type = 'text';
+                btn.textContent = '🔒 Скрыть';
+            } else {
+                input.type = 'password';
+                btn.textContent = '👁️ Показать';
+            }
+        }
+    </script>
 </head>
 <body>
     <div class="container">
-        <header>
-            <div>
-                <h1>Клиент FPTN</h1>
-                <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Маршрутизируемый VPN-клиент на Keenetic/Entware</p>
+        
+        <?php if (!$password_set): ?>
+            <!-- Шаблон установки пароля администратора -->
+            <div class="card auth-container">
+                <h2 style="border-bottom: none; text-align: center; margin-bottom: 24px;">Установка пароля веб-панели</h2>
+                <?php if ($error): ?>
+                    <div class="alert alert-error"><?php echo $error; ?></div>
+                <?php endif; ?>
+                <form method="POST">
+                    <input type="hidden" name="action" value="setup_password">
+                    <div class="form-group">
+                        <label for="new_pass">Новый пароль (минимум 6 символов)</label>
+                        <input type="password" id="new_pass" name="password" required autocomplete="new-password">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm_pass">Подтверждение пароля</label>
+                        <input type="password" id="confirm_pass" name="confirm_password" required autocomplete="new-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-full">Сохранить пароль</button>
+                </form>
             </div>
-            <div class="status-badge <?php echo $service_running ? 'active' : 'inactive'; ?>">
-                <span class="status-dot"></span>
-                <span><?php echo $service_running ? 'Служба работает' : 'Служба остановлена'; ?></span>
+            
+        <?php elseif (!$authenticated): ?>
+            <!-- Шаблон входа в веб-панель -->
+            <div class="card auth-container">
+                <h2 style="border-bottom: none; text-align: center; margin-bottom: 24px;">Вход в панель управления FPTN</h2>
+                <?php if ($error): ?>
+                    <div class="alert alert-error"><?php echo $error; ?></div>
+                <?php endif; ?>
+                <form method="POST">
+                    <input type="hidden" name="action" value="login">
+                    <div class="form-group">
+                        <label for="login_pass">Пароль администратора</label>
+                        <input type="password" id="login_pass" name="password" required autofocus autocomplete="current-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-full">Войти</button>
+                </form>
             </div>
-        </header>
+            
+        <?php else: ?>
+            <!-- Основной интерфейс управления (доступен только после авторизации) -->
+            <header>
+                <div>
+                    <h1>Клиент FPTN</h1>
+                    <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Маршрутизируемый VPN-клиент на Keenetic/Entware</p>
+                </div>
+                <div style="display: flex; align-items: center; gap: 16px;">
+                    <div class="status-badge <?php echo $service_running ? 'active' : 'inactive'; ?>">
+                        <span class="status-dot"></span>
+                        <span><?php echo $service_running ? 'Служба работает' : 'Служба остановлена'; ?></span>
+                    </div>
+                    <form method="POST" style="margin: 0;">
+                        <input type="hidden" name="action" value="logout">
+                        <button type="submit" class="btn btn-secondary btn-sm" style="padding: 6px 12px; font-size: 12px; border-radius: 8px;">Выйти</button>
+                    </form>
+                </div>
+            </header>
 
-        <?php if ($message): ?>
-            <div class="alert alert-success"><?php echo $message; ?></div>
-        <?php endif; ?>
+            <?php if ($message): ?>
+                <div class="alert alert-success"><?php echo $message; ?></div>
+            <?php endif; ?>
 
-        <?php if ($error): ?>
-            <div class="alert alert-error"><?php echo $error; ?></div>
-        <?php endif; ?>
+            <?php if ($error): ?>
+                <div class="alert alert-error"><?php echo $error; ?></div>
+            <?php endif; ?>
 
-        <div class="grid">
-            <!-- Карточка статуса -->
-            <div class="card">
-                <h2>Параметры соединения</h2>
-                <div class="info-row">
-                    <span class="info-label">Интерфейс:</span>
-                    <span class="info-value" style="font-family: monospace;"><?php echo htmlspecialchars($config['TUN_INTERFACE']); ?></span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">Статус интерфейса:</span>
-                    <span class="info-value <?php echo $interface_status === 'Активен' ? 'text-success' : ''; ?>" style="color: <?php echo $interface_status === 'Активен' ? 'var(--accent-green)' : 'var(--text-muted)'; ?>">
-                        <?php echo $interface_status; ?>
-                    </span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">IP-адрес TUN:</span>
-                    <span class="info-value" style="font-family: monospace;"><?php echo $interface_ip ? htmlspecialchars($interface_ip) : '—'; ?></span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">Имя подписки:</span>
-                    <span class="info-value"><?php echo $service_name ? htmlspecialchars($service_name) : 'Неизвестно'; ?></span>
-                </div>
-                <div class="info-row">
-                    <span class="info-label">PID процесса:</span>
-                    <span class="info-value" style="font-family: monospace;"><?php echo $pid ? htmlspecialchars($pid) : '—'; ?></span>
+            <div class="grid">
+                <!-- Карточка статуса -->
+                <div class="card">
+                    <h2>Параметры соединения</h2>
+                    <div class="info-row">
+                        <span class="info-label">Интерфейс:</span>
+                        <span class="info-value" style="font-family: monospace;"><?php echo htmlspecialchars($config['TUN_INTERFACE']); ?></span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Статус интерфейса:</span>
+                        <span class="info-value" style="color: <?php echo $interface_status === 'Активен' ? 'var(--accent-green)' : 'var(--text-muted)'; ?>">
+                            <?php echo $interface_status; ?>
+                        </span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">IP-адрес TUN:</span>
+                        <span class="info-value" style="font-family: monospace;"><?php echo $interface_ip ? htmlspecialchars($interface_ip) : '—'; ?></span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">Имя подписки:</span>
+                        <span class="info-value"><?php echo $service_name ? htmlspecialchars($service_name) : 'Неизвестно'; ?></span>
+                    </div>
+                    <div class="info-row">
+                        <span class="info-label">PID процесса:</span>
+                        <span class="info-value" style="font-family: monospace;"><?php echo $pid ? htmlspecialchars($pid) : '—'; ?></span>
+                    </div>
+
+                    <div class="btn-group" style="margin-top: 24px;">
+                        <?php if ($service_running): ?>
+                            <form method="POST" style="flex: 1;">
+                                <input type="hidden" name="action" value="stop">
+                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                                <button type="submit" class="btn btn-danger btn-full">Остановить</button>
+                            </form>
+                            <form method="POST" style="flex: 1;">
+                                <input type="hidden" name="action" value="restart">
+                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                                <button type="submit" class="btn btn-secondary btn-full">Перезапустить</button>
+                            </form>
+                        <?php else: ?>
+                            <form method="POST" style="width: 100%;">
+                                <input type="hidden" name="action" value="start">
+                                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                                <button type="submit" class="btn btn-success btn-full">Запустить службу</button>
+                            </form>
+                        <?php endif; ?>
+                    </div>
                 </div>
 
-                <div class="btn-group" style="margin-top: 24px;">
-                    <?php if ($service_running): ?>
-                        <form method="POST" style="flex: 1;">
-                            <input type="hidden" name="action" value="stop">
-                            <button type="submit" class="btn btn-danger btn-full">Остановить</button>
-                        </form>
-                        <form method="POST" style="flex: 1;">
-                            <input type="hidden" name="action" value="restart">
-                            <button type="submit" class="btn btn-secondary btn-full">Перезапустить</button>
-                        </form>
+                <!-- Карточка выбора сервера -->
+                <div class="card">
+                    <h2>Выбор сервера</h2>
+                    <?php if (empty($servers_data)): ?>
+                        <p style="color: var(--text-muted); font-size: 14px;">Импортируйте токен подписки, чтобы увидеть список доступных серверов.</p>
                     <?php else: ?>
-                        <form method="POST" style="width: 100%;">
-                            <input type="hidden" name="action" value="start">
-                            <button type="submit" class="btn btn-success btn-full">Запустить службу</button>
+                        <form method="POST">
+                            <input type="hidden" name="action" value="save_server">
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                            <div class="form-group">
+                                <label for="server-select">Сервер для подключения</label>
+                                <select id="server-select" name="server">
+                                    <option value="" <?php echo empty($config['PREFERRED_SERVER']) ? 'selected' : ''; ?>>Автовыбор (Быстрейший)</option>
+                                    <?php foreach ($servers_data as $srv): ?>
+                                        <option value="<?php echo htmlspecialchars($srv['name']); ?>" <?php echo $config['PREFERRED_SERVER'] === $srv['name'] ? 'selected' : ''; ?>>
+                                            <?php echo htmlspecialchars($srv['name']); ?> (<?php echo htmlspecialchars($srv['host']); ?>:<?php echo $srv['port']; ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-full">Сохранить выбор</button>
                         </form>
                     <?php endif; ?>
                 </div>
             </div>
 
-            <!-- Карточка выбора сервера -->
-            <div class="card">
-                <h2>Выбор сервера</h2>
-                <?php if (empty($servers_data)): ?>
-                    <p style="color: var(--text-muted); font-size: 14px;">Импортируйте токен подписки, чтобы увидеть список доступных серверов.</p>
-                <?php else: ?>
-                    <form method="POST">
-                        <input type="hidden" name="action" value="save_server">
-                        <div class="form-group">
-                            <label for="server-select">Сервер для подключения</label>
-                            <select id="server-select" name="server">
-                                <option value="" <?php echo empty($config['PREFERRED_SERVER']) ? 'selected' : ''; ?>>Автовыбор (Быстрейший)</option>
-                                <?php foreach ($servers_data as $srv): ?>
-                                    <option value="<?php echo htmlspecialchars($srv['name']); ?>" <?php echo $config['PREFERRED_SERVER'] === $srv['name'] ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($srv['name']); ?> (<?php echo htmlspecialchars($srv['host']); ?>:<?php echo $srv['port']; ?>)
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <button type="submit" class="btn btn-primary btn-full">Сохранить выбор</button>
-                    </form>
-                <?php endif; ?>
+            <!-- Карточка токена -->
+            <div class="card" style="margin-bottom: 40px;">
+                <h2>Токен подписки FPTN</h2>
+                <form method="POST">
+                    <input type="hidden" name="action" value="save_token">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                    <div class="form-group">
+                        <label for="token-input">Токен подписки (fptnb:...)</label>
+                        <input type="password" id="token-input" name="token" placeholder="fptnb:..." value="<?php echo htmlspecialchars($config['TOKEN']); ?>" autocomplete="off" style="padding-right: 110px;">
+                        <button type="button" id="toggle-token-btn" class="toggle-btn" onclick="toggleVisibility('token-input', 'toggle-token-btn')">👁️ Показать</button>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Применить токен</button>
+                </form>
             </div>
-        </div>
-
-        <!-- Карточка токена -->
-        <div class="card">
-            <h2>Токен подписки FPTN</h2>
-            <form method="POST">
-                <input type="hidden" name="action" value="save_token">
-                <div class="form-group">
-                    <label for="token-input">Токен подписки (fptnb:...)</label>
-                    <input type="text" id="token-input" name="token" placeholder="fptnb:..." value="<?php echo htmlspecialchars($config['TOKEN']); ?>" autocomplete="off">
-                </div>
-                <button type="submit" class="btn btn-primary">Применить токен</button>
-            </form>
-        </div>
+        <?php endif; ?>
     </div>
 </body>
 </html>

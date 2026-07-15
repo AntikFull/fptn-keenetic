@@ -93,7 +93,7 @@ esac
 echo "Архитектура процессора: $RAW_ARCH ($ARCH_SUFFIX)"
 echo "Скачивание скомпилированного бинарника..."
 
-DOWNLOAD_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.0-keenetic/fptn-client-cli-${ARCH_SUFFIX}"
+DOWNLOAD_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.1-keenetic/fptn-client-cli-${ARCH_SUFFIX}"
 if ! curl -L -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
     echo "Ошибка: Не удалось скачать бинарный файл по адресу: $DOWNLOAD_URL"
     echo "Проверьте интернет-соединение или доступность релиза на GitHub."
@@ -199,8 +199,6 @@ ENABLED="no"
 TOKEN="$USER_TOKEN"
 PREFERRED_SERVER=""
 TUN_INTERFACE="$USER_LTUN"
-export GOGC="10"
-export GOMEMLIMIT="25MiB"
 EOF
 chmod 600 /opt/etc/fptn-client.conf
 
