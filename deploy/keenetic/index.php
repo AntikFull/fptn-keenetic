@@ -7,7 +7,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.0.1-keenetic');
+define('CURRENT_VERSION', 'v1.0.2-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -176,6 +176,7 @@ $config = [
     'TOKEN' => '',
     'PREFERRED_SERVER' => '',
     'TUN_INTERFACE' => 'opkgtun1',
+    'WATCHDOG' => 'yes', // Автопинг-наблюдатель для перезапуска при зависании серверов
     'WEB_PASSWORD' => '' // Хэш пароля для доступа к веб-панели
 ];
 
@@ -336,6 +337,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             exec($cmd, $restart_output, $restart_return);
                             $message .= ' Служба автоматически перезапущена.';
                         }
+                    } else {
+                        $error = 'Не удалось записать конфигурацию.';
+                    }
+                }
+                
+                elseif ($action === 'save_watchdog') {
+                    $watchdog = isset($_POST['watchdog']) && $_POST['watchdog'] === '1' ? 'yes' : 'no';
+                    $config['WATCHDOG'] = $watchdog;
+                    if (write_config()) {
+                        $message = 'Настройка автопинга (Watchdog) обновлена. Статус: ' . ($watchdog === 'yes' ? 'Включен' : 'Выключен');
                     } else {
                         $error = 'Не удалось записать конфигурацию.';
                     }
@@ -679,6 +690,24 @@ if (file_exists($servers_file)) {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        /* Стили для тумблера Watchdog */
+        .switch input:checked + .slider {
+            background-color: var(--accent-blue);
+        }
+        .switch input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 16px;
+            width: 16px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
     </style>
     <script>
         function toggleVisibility(inputId, btnId) {
@@ -900,7 +929,7 @@ if (file_exists($servers_file)) {
                     <?php if (empty($servers_data)): ?>
                         <p style="color: var(--text-muted); font-size: 14px;">Импортируйте токен подписки, чтобы увидеть список доступных серверов.</p>
                     <?php else: ?>
-                        <form method="POST">
+                        <form method="POST" style="margin-bottom: 20px;">
                             <input type="hidden" name="action" value="save_server">
                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                             <div class="form-group">
@@ -917,6 +946,23 @@ if (file_exists($servers_file)) {
                             <button type="submit" class="btn btn-primary btn-full">Сохранить выбор</button>
                         </form>
                     <?php endif; ?>
+
+                    <div style="border-top: 1px dashed var(--border-color); padding-top: 20px; margin-top: 20px;">
+                        <form method="POST">
+                            <input type="hidden" name="action" value="save_watchdog">
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; background: rgba(59, 130, 246, 0.03); padding: 12px; border-radius: 10px; border: 1px solid var(--border-color);">
+                                <div>
+                                    <span style="font-weight: 600; font-size: 14px; display: block; color: var(--text-color);">Автопинг и переключение</span>
+                                    <span style="font-size: 11px; color: var(--text-muted); display: block; margin-top: 2px;">Перезапустит VPN на новый сервер, если текущий завис или упал</span>
+                                </div>
+                                <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 22px; flex-shrink: 0;">
+                                    <input type="checkbox" name="watchdog" value="1" <?php echo $config['WATCHDOG'] === 'yes' ? 'checked' : ''; ?> onchange="this.form.submit()" style="opacity: 0; width: 0; height: 0;">
+                                    <span class="slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #374151; transition: .3s; border-radius: 22px;"></span>
+                                </label>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             </div>
 

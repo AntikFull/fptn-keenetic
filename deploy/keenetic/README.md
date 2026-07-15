@@ -39,10 +39,10 @@ opkg install lighttpd php8-cgi php8-mod-openssl curl ca-bundle ca-certificates
 ```
 
 ### Шаг 2. Развертывание бинарника
-Скачайте бинарник для вашей архитектуры процессора (посмотрите через `uname -m`) из [Релизов GitHub](https://github.com/AntikFull/fptn-keenetic/releases/tag/v1.0.1-keenetic) и положите его по пути `/opt/bin/fptn-client-cli`:
+Скачайте бинарник для вашей архитектуры процессора (посмотрите через `uname -m`) из [Релизов GitHub](https://github.com/AntikFull/fptn-keenetic/releases/tag/v1.0.2-keenetic) и положите его по пути `/opt/bin/fptn-client-cli`:
 ```bash
 # Пример для aarch64
-curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.1-keenetic/fptn-client-cli-aarch64
+curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic/fptn-client-cli-aarch64
 chmod +x /opt/bin/fptn-client-cli
 ```
 

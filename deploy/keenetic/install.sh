@@ -19,13 +19,13 @@ fi
 
 # Определение зеркал GitHub при блокировках ТСПУ
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master"
-GITHUB_DL_BASE="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.1-keenetic"
+GITHUB_DL_BASE="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic"
 
 echo "Проверка доступности GitHub..."
 if ! curl -I -s --connect-timeout 4 https://raw.githubusercontent.com >/dev/null 2>&1; then
     echo "GitHub заблокирован или недоступен. Переключаемся на зеркало gitmirror.com..."
     GITHUB_RAW_BASE="https://raw.gitmirror.com/AntikFull/fptn-keenetic/master"
-    GITHUB_DL_BASE="https://github.gitmirror.com/https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.1-keenetic"
+    GITHUB_DL_BASE="https://github.gitmirror.com/https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic"
 fi
 
 # 2. Интерактивный опрос параметров
@@ -78,7 +78,7 @@ fi
 echo ""
 echo "[1/7] Обновление пакетов и установка зависимостей..."
 opkg update
-opkg install lighttpd php8-cgi php8-mod-openssl curl ca-bundle ca-certificates
+opkg install lighttpd php8-cgi php8-mod-openssl curl ca-bundle ca-certificates cron
 
 # 4. Автоопределение архитектуры и скачивание бинарника fptn-client-cli
 echo ""
@@ -203,25 +203,59 @@ chmod 644 "$WWW_DIR/index.php"
 
 # 8. Создание файла конфигурации FPTN службы
 echo ""
-echo "[6/7] Создание файла конфигурации FPTN..."
+echo "[6/8] Создание файла конфигурации FPTN..."
 cat << EOF > /opt/etc/fptn-client.conf
 # Конфигурация клиента FPTN (Создано автоматически)
 ENABLED="no"
 TOKEN="$USER_TOKEN"
 PREFERRED_SERVER=""
 TUN_INTERFACE="$USER_LTUN"
+WATCHDOG="yes"
 EOF
 chmod 600 /opt/etc/fptn-client.conf
 
 # 9. Установка init-скрипта автозапуска службы
 echo ""
-echo "[7/7] Настройка службы автозапуска..."
+echo "[7/8] Настройка службы автозапуска..."
 if [ -f "$SCRIPT_DIR/S53fptn-client" ]; then
     cp "$SCRIPT_DIR/S53fptn-client" "/opt/etc/init.d/S53fptn-client"
 else
     curl -L -o "/opt/etc/init.d/S53fptn-client" "${GITHUB_RAW_BASE}/deploy/keenetic/S53fptn-client"
 fi
 chmod 755 /opt/etc/init.d/S53fptn-client
+
+# 10. Настройка автопинг-наблюдателя (Watchdog) и планировщика задач
+echo ""
+echo "[8/8] Настройка автопинг-наблюдателя (Watchdog)..."
+if [ -f "$SCRIPT_DIR/fptn-watchdog.sh" ]; then
+    cp "$SCRIPT_DIR/fptn-watchdog.sh" "/opt/bin/fptn-watchdog.sh"
+else
+    curl -L -o "/opt/bin/fptn-watchdog.sh" "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-watchdog.sh"
+fi
+chmod 755 /opt/bin/fptn-watchdog.sh
+
+# Прописываем задачу в кронтаб Entware
+CRONTAB="/opt/etc/crontab"
+CRON_JOB="*/1 * * * * root /opt/bin/fptn-watchdog.sh"
+if [ -f "$CRONTAB" ]; then
+    if ! grep -q "fptn-watchdog.sh" "$CRONTAB"; then
+        echo "$CRON_JOB" >> "$CRONTAB"
+    fi
+else
+    cat << EOF > "$CRONTAB"
+SHELL=/bin/sh
+PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# m h dom mon dow user  command
+$CRON_JOB
+EOF
+fi
+
+# Включаем и запускаем службу планировщика cron
+if [ -x "/opt/etc/init.d/S05cron" ]; then
+    /opt/etc/init.d/S05cron start >/dev/null 2>&1
+elif [ -x "/opt/etc/init.d/S10cron" ]; then
+    /opt/etc/init.d/S10cron start >/dev/null 2>&1
+fi
 
 echo ""
 echo "==========================================================="
