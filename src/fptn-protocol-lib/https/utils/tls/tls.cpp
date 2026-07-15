@@ -384,19 +384,28 @@ std::optional<std::array<std::uint8_t, 32>> GenerateDecoyTlsSessionId2() {
   return session_id;
 }
 
-// MAYBE IT WILL REFACTOR
 namespace {
-std::unordered_map<SSL*, CertificateVerificationCallback*> attach_callbacks;
-std::mutex attach_callback_mutex;
+int GetSslVerifyCallbackIndex() {
+  static const int index = ::SSL_get_ex_new_index(
+      0, nullptr, nullptr, nullptr,
+      [](void* parent, void* ptr, CRYPTO_EX_DATA* ad, int idx, long argl, void* argp) {
+        if (ptr) {
+          delete static_cast<CertificateVerificationCallback*>(ptr);
+        }
+      });
+  return index;
+}
 }  // namespace
 
 void AttachCertificateVerificationCallback(
     SSL* ssl, const CertificateVerificationCallback& callback) {
   auto* func_ptr = new CertificateVerificationCallback(callback);
-  {
-    const std::scoped_lock lock(attach_callback_mutex);  // mutex
-    attach_callbacks[ssl] = func_ptr;
+
+  void* old_ptr = ::SSL_get_ex_data(ssl, GetSslVerifyCallbackIndex());
+  if (old_ptr) {
+    delete static_cast<CertificateVerificationCallback*>(old_ptr);
   }
+  ::SSL_set_ex_data(ssl, GetSslVerifyCallbackIndex(), func_ptr);
 
   ::SSL_set_verify(
       ssl, SSL_VERIFY_PEER, [](int preverified, X509_STORE_CTX* ctx) -> int {
@@ -418,24 +427,20 @@ void AttachCertificateVerificationCallback(
           return 0;
         }
 
-        const std::scoped_lock lock(attach_callback_mutex);  // mutex
-        {
-          const auto it = attach_callbacks.find(ssl);
-          if (it == attach_callbacks.end()) {
-            return 0;
-          }
-          return (it->second && (*it->second)(md5_fingerprint) ? 1 : 0);
+        auto* func_ptr = static_cast<CertificateVerificationCallback*>(
+            ::SSL_get_ex_data(ssl, GetSslVerifyCallbackIndex()));
+        if (!func_ptr) {
+          return 0;
         }
+        return ((*func_ptr)(md5_fingerprint) ? 1 : 0);
       });
 }
 
 void AttachCertificateVerificationCallbackDelete(SSL* ssl) {
-  const std::scoped_lock lock(attach_callback_mutex);  // mutex
-
-  auto it = attach_callbacks.find(ssl);
-  if (it != attach_callbacks.end()) {
-    delete it->second;  // Clean up the allocated callback
-    attach_callbacks.erase(it);
+  void* ptr = ::SSL_get_ex_data(ssl, GetSslVerifyCallbackIndex());
+  if (ptr) {
+    delete static_cast<CertificateVerificationCallback*>(ptr);
+    ::SSL_set_ex_data(ssl, GetSslVerifyCallbackIndex(), nullptr);
   }
 }
 
