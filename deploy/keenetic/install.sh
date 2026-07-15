@@ -98,7 +98,7 @@ echo "Архитектура процессора: $RAW_ARCH ($ARCH_SUFFIX)"
 # Останавливаем запущенную службу, чтобы избежать ошибки "Text file busy"
 if [ -f "/opt/etc/init.d/S53fptn-client" ]; then
     echo "Остановка запущенной службы VPN перед обновлением бинарника..."
-    /opt/etc/init.d/S53fptn-client stop >/dev/null 2>&1
+    /opt/etc/init.d/S53fptn-client stop >/dev/null 2>&1 || true
     sleep 1
 fi
 pkill -9 -f "/opt/bin/fptn-client-cli" >/dev/null 2>&1 || true
