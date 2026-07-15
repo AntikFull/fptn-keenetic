@@ -180,9 +180,11 @@ class GenericTunInterface final
 
       /* set IPv6 */
       // cppcheck-suppress knownConditionTrueFalse
-      if (!device_.ConfigureIPv6(
-              this->IPv6Addr().ToString(), this->IPv6Netmask())) {
-        SPDLOG_WARN("IPv6 configuration failed, continuing with IPv4 only");
+      if (!this->IPv6Addr().IsEmpty()) {
+        if (!device_.ConfigureIPv6(
+                this->IPv6Addr().ToString(), this->IPv6Netmask())) {
+          SPDLOG_WARN("IPv6 configuration failed, continuing with IPv4 only");
+        }
       }
       /* set IPv4 */
       // cppcheck-suppress knownConditionTrueFalse

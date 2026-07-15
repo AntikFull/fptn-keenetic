@@ -18,7 +18,7 @@ if [ ! -d "/opt/etc" ] || [ ! -x "/opt/bin/opkg" ]; then
 fi
 
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master"
-GITHUB_DL_BASE="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic"
+GITHUB_DL_BASE="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.3-keenetic"
 
 # 2. Интерактивный опрос параметров
 # Пытаемся определить текущий порт веб-сервера lighttpd

@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
         .default_value(FPTN_CLIENT_DEFAULT_ADDRESS_IP4)
         .help("Network interface IPv4 address");
     args.add_argument("--tun-interface-ipv6")
-        .default_value(FPTN_CLIENT_DEFAULT_ADDRESS_IP6)
+        .default_value(std::string(""))
         .help("Network interface IPv6 address");
     args.add_argument("--sni")
         .default_value(FPTN_DEFAULT_SNI)
