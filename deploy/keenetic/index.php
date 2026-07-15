@@ -52,7 +52,12 @@ if (isset($_GET['ajax']) && $authenticated) {
     $ajax_action = $_GET['ajax'];
     
     if ($ajax_action === 'check_update') {
-        $res = http_get_contents('https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt', 5);
+        $github_raw_url = 'https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt';
+        $res = http_get_contents($github_raw_url, 4);
+        if ($res['code'] !== 200) {
+            $github_raw_url = 'https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/version.txt';
+            $res = http_get_contents($github_raw_url, 4);
+        }
         
         if ($res['code'] === 200 && !empty($res['data'])) {
             $remote_version = trim($res['data']);
@@ -103,16 +108,30 @@ if (isset($_GET['ajax']) && $authenticated) {
         }
         
         // Получение актуального тега версии с GitHub
-        $res_ver = http_get_contents('https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt', 5);
-        $remote_version = ($res_ver['code'] === 200) ? trim($res_ver['data']) : '';
+        $github_raw_url = 'https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt';
+        $use_mirrors = false;
         
+        $res_ver = http_get_contents($github_raw_url, 4);
+        if ($res_ver['code'] !== 200) {
+            // Переключаемся на зеркало jsDelivr
+            $use_mirrors = true;
+            $github_raw_url = 'https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/version.txt';
+            $res_ver = http_get_contents($github_raw_url, 4);
+        }
+        
+        $remote_version = ($res_ver['code'] === 200) ? trim($res_ver['data']) : '';
         if (empty($remote_version)) {
-            echo json_encode(['success' => false, 'message' => 'Не удалось определить версию релиза для скачивания бинарников.']);
+            echo json_encode(['success' => false, 'message' => 'Не удалось определить версию релиза для скачивания бинарников (даже через зеркало).']);
             exit;
         }
         
-        $bin_url = "https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
-        $php_url = "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php";
+        if ($use_mirrors) {
+            $bin_url = "https://ghproxy.net/https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
+            $php_url = "https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/index.php";
+        } else {
+            $bin_url = "https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
+            $php_url = "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php";
+        }
         
         $tmp_bin = "/tmp/fptn-client-cli.tmp";
         $tmp_php = "/tmp/index.php.tmp";

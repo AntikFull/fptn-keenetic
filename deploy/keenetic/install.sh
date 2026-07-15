@@ -23,9 +23,9 @@ GITHUB_DL_BASE="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.
 
 echo "Проверка доступности GitHub..."
 if ! curl -I -s --connect-timeout 4 https://raw.githubusercontent.com >/dev/null 2>&1; then
-    echo "GitHub заблокирован или недоступен. Переключаемся на зеркало gitmirror.com..."
-    GITHUB_RAW_BASE="https://raw.gitmirror.com/AntikFull/fptn-keenetic/master"
-    GITHUB_DL_BASE="https://github.gitmirror.com/https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic"
+    echo "GitHub заблокирован или недоступен. Переключаемся на зеркала (jsDelivr CDN и ghproxy.net)..."
+    GITHUB_RAW_BASE="https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master"
+    GITHUB_DL_BASE="https://ghproxy.net/https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic"
 fi
 
 # 2. Интерактивный опрос параметров
