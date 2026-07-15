@@ -26,6 +26,7 @@ if [ -n "$PREFERRED_SERVER" ]; then
     ARGS="$ARGS --preferred-server $PREFERRED_SERVER"
 fi
 
+PRECMD="ip link delete ${TUN_INTERFACE:-opkgtun1} >/dev/null 2>&1 || true"
 PREARGS=""
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
