@@ -6,9 +6,22 @@
 
 ## 1. Быстрая установка (Рекомендуемая)
 
-Запустите интерактивный установщик на роутере по SSH:
+Запустите интерактивный установщик на роутере по SSH.
+
+### 🚀 Стандартная установка:
+Скачайте скрипт установщика во временный файл и запустите его (это необходимо для корректной работы ввода в терминале):
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/install.sh)"
+curl -fsSL -o /tmp/install.sh https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/install.sh && sh /tmp/install.sh
+```
+
+### ⚡ Зеркало для РФ (в случае блокировок GitHub):
+Если ваш провайдер или ТСПУ блокирует GitHub (зависает на raw.githubusercontent.com), используйте быстрое CDN-зеркало:
+```bash
+curl -fsSL -o /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
+```
+*(Или через `wget`, если на роутере нет curl:)*
+```bash
+wget -O /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
 ```
 
 Скрипт автоматически установит все пакеты, скачает бинарный файл под архитектуру вашего процессора (`aarch64`, `armv7`, `mipsel`), создаст туннельный интерфейс в KeeneticOS и настроит веб-панель.
