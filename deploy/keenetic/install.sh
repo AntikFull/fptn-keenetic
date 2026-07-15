@@ -109,10 +109,10 @@ rm -f /opt/bin/fptn-client-cli
 echo "Скачивание скомпилированного бинарника..."
 
 DOWNLOAD_URL="${GITHUB_DL_BASE}/fptn-client-cli-${ARCH_SUFFIX}"
-if ! curl -L -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
-    echo "Прямое скачивание не удалось. Повторная попытка через прокси-зеркало ghproxy.net..."
-    DOWNLOAD_URL="https://ghproxy.net/${DOWNLOAD_URL}"
-    if ! curl -L -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
+if ! curl -L --connect-timeout 10 --max-time 120 -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
+    echo "Прямое скачивание не удалось или зависло. Повторная попытка через прокси-зеркало ghproxy.net..."
+    PROXY_DOWNLOAD_URL="https://ghproxy.net/${DOWNLOAD_URL}"
+    if ! curl -L --connect-timeout 15 --max-time 180 -o /opt/bin/fptn-client-cli "$PROXY_DOWNLOAD_URL"; then
         echo "Ошибка: Не удалось скачать бинарный файл по адресу: $DOWNLOAD_URL"
         echo "Проверьте интернет-соединение или доступность релиза на GitHub."
         exit 1
