@@ -17,6 +17,17 @@ if [ ! -d "/opt/etc" ] || [ ! -x "/opt/bin/opkg" ]; then
     exit 1
 fi
 
+# Определение зеркал GitHub при блокировках ТСПУ
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master"
+GITHUB_DL_BASE="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.1-keenetic"
+
+echo "Проверка доступности GitHub..."
+if ! curl -I -s --connect-timeout 4 https://raw.githubusercontent.com >/dev/null 2>&1; then
+    echo "GitHub заблокирован или недоступен. Переключаемся на зеркало gitmirror.com..."
+    GITHUB_RAW_BASE="https://raw.gitmirror.com/AntikFull/fptn-keenetic/master"
+    GITHUB_DL_BASE="https://github.gitmirror.com/https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.1-keenetic"
+fi
+
 # 2. Интерактивный опрос параметров
 # Пытаемся определить текущий порт веб-сервера lighttpd
 DEFAULT_PORT=8088
@@ -93,7 +104,7 @@ esac
 echo "Архитектура процессора: $RAW_ARCH ($ARCH_SUFFIX)"
 echo "Скачивание скомпилированного бинарника..."
 
-DOWNLOAD_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.1-keenetic/fptn-client-cli-${ARCH_SUFFIX}"
+DOWNLOAD_URL="${GITHUB_DL_BASE}/fptn-client-cli-${ARCH_SUFFIX}"
 if ! curl -L -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
     echo "Ошибка: Не удалось скачать бинарный файл по адресу: $DOWNLOAD_URL"
     echo "Проверьте интернет-соединение или доступность релиза на GitHub."
@@ -186,7 +197,7 @@ if [ -f "$SCRIPT_DIR/index.php" ]; then
     cp "$SCRIPT_DIR/index.php" "$WWW_DIR/index.php"
 else
     # Иначе скачиваем из GitHub
-    curl -L -o "$WWW_DIR/index.php" "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php"
+    curl -L -o "$WWW_DIR/index.php" "${GITHUB_RAW_BASE}/deploy/keenetic/index.php"
 fi
 chmod 644 "$WWW_DIR/index.php"
 
@@ -208,7 +219,7 @@ echo "[7/7] Настройка службы автозапуска..."
 if [ -f "$SCRIPT_DIR/S53fptn-client" ]; then
     cp "$SCRIPT_DIR/S53fptn-client" "/opt/etc/init.d/S53fptn-client"
 else
-    curl -L -o "/opt/etc/init.d/S53fptn-client" "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/S53fptn-client"
+    curl -L -o "/opt/etc/init.d/S53fptn-client" "${GITHUB_RAW_BASE}/deploy/keenetic/S53fptn-client"
 fi
 chmod 755 /opt/etc/init.d/S53fptn-client
 
