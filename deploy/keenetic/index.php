@@ -5,6 +5,7 @@
 
 session_name('FPTN_SESS');
 session_start();
+header('Content-Type: text/html; charset=utf-8');
 
 define('CURRENT_VERSION', 'v1.0.1-keenetic');
 
