@@ -55,7 +55,7 @@ if (isset($_GET['ajax']) && $authenticated) {
         $github_raw_url = 'https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt';
         $res = http_get_contents($github_raw_url, 4);
         if ($res['code'] !== 200) {
-            $github_raw_url = 'https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/version.txt';
+            $github_raw_url = 'https://ghproxy.net/https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt';
             $res = http_get_contents($github_raw_url, 4);
         }
         
@@ -113,9 +113,9 @@ if (isset($_GET['ajax']) && $authenticated) {
         
         $res_ver = http_get_contents($github_raw_url, 4);
         if ($res_ver['code'] !== 200) {
-            // Переключаемся на зеркало jsDelivr
+            // Переключаемся на зеркало ghproxy.net
             $use_mirrors = true;
-            $github_raw_url = 'https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/version.txt';
+            $github_raw_url = 'https://ghproxy.net/https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt';
             $res_ver = http_get_contents($github_raw_url, 4);
         }
         
@@ -127,7 +127,7 @@ if (isset($_GET['ajax']) && $authenticated) {
         
         if ($use_mirrors) {
             $bin_url = "https://ghproxy.net/https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
-            $php_url = "https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/index.php";
+            $php_url = "https://ghproxy.net/https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php";
         } else {
             $bin_url = "https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
             $php_url = "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php";
