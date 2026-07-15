@@ -17,16 +17,8 @@ if [ ! -d "/opt/etc" ] || [ ! -x "/opt/bin/opkg" ]; then
     exit 1
 fi
 
-# Определение зеркал GitHub при блокировках ТСПУ
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master"
 GITHUB_DL_BASE="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic"
-
-echo "Проверка доступности GitHub..."
-if ! curl -I -s --connect-timeout 4 https://raw.githubusercontent.com >/dev/null 2>&1; then
-    echo "GitHub заблокирован или недоступен. Переключаемся на рабочие прокси-зеркала ghproxy.net..."
-    GITHUB_RAW_BASE="https://ghproxy.net/https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master"
-    GITHUB_DL_BASE="https://ghproxy.net/https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic"
-fi
 
 # 2. Интерактивный опрос параметров
 # Пытаемся определить текущий порт веб-сервера lighttpd
@@ -104,20 +96,27 @@ esac
 echo "Архитектура процессора: $RAW_ARCH ($ARCH_SUFFIX)"
 
 # Останавливаем запущенную службу, чтобы избежать ошибки "Text file busy"
-if [ -x "/opt/etc/init.d/S53fptn-client" ]; then
+if [ -f "/opt/etc/init.d/S53fptn-client" ]; then
     echo "Остановка запущенной службы VPN перед обновлением бинарника..."
     /opt/etc/init.d/S53fptn-client stop >/dev/null 2>&1
-    sleep 2
-    pkill -9 -f "/opt/bin/fptn-client-cli" >/dev/null 2>&1 || true
+    sleep 1
 fi
+pkill -9 -f "/opt/bin/fptn-client-cli" >/dev/null 2>&1 || true
+
+# Удаляем старый бинарник, чтобы гарантированно избежать ошибки "Text file busy" при записи
+rm -f /opt/bin/fptn-client-cli
 
 echo "Скачивание скомпилированного бинарника..."
 
 DOWNLOAD_URL="${GITHUB_DL_BASE}/fptn-client-cli-${ARCH_SUFFIX}"
 if ! curl -L -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
-    echo "Ошибка: Не удалось скачать бинарный файл по адресу: $DOWNLOAD_URL"
-    echo "Проверьте интернет-соединение или доступность релиза на GitHub."
-    exit 1
+    echo "Прямое скачивание не удалось. Повторная попытка через прокси-зеркало ghproxy.net..."
+    DOWNLOAD_URL="https://ghproxy.net/${DOWNLOAD_URL}"
+    if ! curl -L -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
+        echo "Ошибка: Не удалось скачать бинарный файл по адресу: $DOWNLOAD_URL"
+        echo "Проверьте интернет-соединение или доступность релиза на GitHub."
+        exit 1
+    fi
 fi
 chmod +x /opt/bin/fptn-client-cli
 
@@ -206,7 +205,13 @@ if [ -f "$SCRIPT_DIR/index.php" ]; then
     cp "$SCRIPT_DIR/index.php" "$WWW_DIR/index.php"
 else
     # Иначе скачиваем из GitHub
-    curl -L -o "$WWW_DIR/index.php" "${GITHUB_RAW_BASE}/deploy/keenetic/index.php"
+    if ! curl -L -o "$WWW_DIR/index.php" "${GITHUB_RAW_BASE}/deploy/keenetic/index.php"; then
+        echo "Прямое скачивание index.php не удалось. Попытка через зеркало..."
+        if ! curl -L -o "$WWW_DIR/index.php" "https://ghproxy.net/${GITHUB_RAW_BASE}/deploy/keenetic/index.php"; then
+            echo "Ошибка: Не удалось скачать index.php"
+            exit 1
+        fi
+    fi
 fi
 chmod 644 "$WWW_DIR/index.php"
 
@@ -229,7 +234,13 @@ echo "[7/8] Настройка службы автозапуска..."
 if [ -f "$SCRIPT_DIR/S53fptn-client" ]; then
     cp "$SCRIPT_DIR/S53fptn-client" "/opt/etc/init.d/S53fptn-client"
 else
-    curl -L -o "/opt/etc/init.d/S53fptn-client" "${GITHUB_RAW_BASE}/deploy/keenetic/S53fptn-client"
+    if ! curl -L -o "/opt/etc/init.d/S53fptn-client" "${GITHUB_RAW_BASE}/deploy/keenetic/S53fptn-client"; then
+        echo "Прямое скачивание S53fptn-client не удалось. Попытка через зеркало..."
+        if ! curl -L -o "/opt/etc/init.d/S53fptn-client" "https://ghproxy.net/${GITHUB_RAW_BASE}/deploy/keenetic/S53fptn-client"; then
+            echo "Ошибка: Не удалось скачать init-скрипт"
+            exit 1
+        fi
+    fi
 fi
 chmod 755 /opt/etc/init.d/S53fptn-client
 
@@ -239,7 +250,13 @@ echo "[8/8] Настройка автопинг-наблюдателя (Watchdog
 if [ -f "$SCRIPT_DIR/fptn-watchdog.sh" ]; then
     cp "$SCRIPT_DIR/fptn-watchdog.sh" "/opt/bin/fptn-watchdog.sh"
 else
-    curl -L -o "/opt/bin/fptn-watchdog.sh" "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-watchdog.sh"
+    if ! curl -L -o "/opt/bin/fptn-watchdog.sh" "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-watchdog.sh"; then
+        echo "Прямое скачивание fptn-watchdog.sh не удалось. Попытка через зеркало..."
+        if ! curl -L -o "/opt/bin/fptn-watchdog.sh" "https://ghproxy.net/${GITHUB_RAW_BASE}/deploy/keenetic/fptn-watchdog.sh"; then
+            echo "Ошибка: Не удалось скачать watchdog-скрипт"
+            exit 1
+        fi
+    fi
 fi
 chmod 755 /opt/bin/fptn-watchdog.sh
 
