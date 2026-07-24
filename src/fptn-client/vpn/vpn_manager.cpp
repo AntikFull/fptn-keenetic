@@ -196,7 +196,7 @@ void VpnManager::HandleOnPacketFromVirtualNetworkInterface(
   if (running_ && config_.http_client) {
     if (packet->IsIPv4()) {
       const auto src_ip = packet->GetSrcIPv4Address();
-      if (!src_ip.IsEmpty() && src_ip.ToString() != FPTN_CLIENT_DEFAULT_ADDRESS_IP4) {
+      if (!src_ip.IsEmpty()) {
         config_.http_client->UpdateTunInterfaceAddressIPv4(src_ip);
       }
     }
