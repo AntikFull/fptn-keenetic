@@ -560,13 +560,16 @@ if ($ip_status === 0 && !empty($ip_output)) {
 
 // Чтение серверов
 $servers_data = [];
-$service_name = '';
-if (file_exists($servers_file)) {
-    $servers_json = json_decode(file_get_contents($servers_file), true);
-    if ($servers_json) {
-        $servers_data = $servers_json['servers'] ?? [];
-        $service_name = $servers_json['service_name'] ?? '';
+$service_title = '—';
+if (!empty($config['TOKEN'])) {
+    if (file_exists($servers_file)) {
+        $json_data = json_decode(file_get_contents($servers_file), true);
+        if (isset($json_data['service_name'])) {
+            $service_title = htmlspecialchars($json_data['service_name']);
+        }
     }
+} else {
+    $service_title = '<span style="color: #ef4444;">Токен не задан</span>';
 }
 ?>
 <!DOCTYPE html>
