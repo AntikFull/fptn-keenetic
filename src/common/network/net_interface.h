@@ -256,7 +256,7 @@ class GenericTunInterface final
     return receive_rate_calculator_.GetRateForSecond();
   }
 
-  std::string GetActualIPv4AddressImpl() const noexcept {
+  std::string GetActualIPv4AddressImpl() const {
     return device_.GetActualIPv4Address();
   }
 

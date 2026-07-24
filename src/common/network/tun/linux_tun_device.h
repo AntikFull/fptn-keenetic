@@ -43,17 +43,21 @@ class LinuxTunDevice {
 
   [[nodiscard]] std::string GetActualIPv4Address() const {
 #if defined(__linux__)
-    if (name_.empty()) return "";
+    if (name_.empty()) {
+      return "";
+    }
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) return "";
+    if (fd < 0) {
+      return "";
+    }
     struct ifreq ifr;
     std::memset(&ifr, 0, sizeof(ifr));
     std::strncpy(ifr.ifr_name, name_.c_str(), IFNAMSIZ - 1);
     if (ioctl(fd, SIOCGIFADDR, &ifr) >= 0) {
-      struct sockaddr_in* ipaddr =
-          reinterpret_cast<struct sockaddr_in*>(&ifr.ifr_addr);
+      struct sockaddr_in ipaddr;
+      std::memcpy(&ipaddr, &ifr.ifr_addr, sizeof(ipaddr));
       char ip_str[INET_ADDRSTRLEN] = {0};
-      if (inet_ntop(AF_INET, &ipaddr->sin_addr, ip_str, sizeof(ip_str))) {
+      if (inet_ntop(AF_INET, &ipaddr.sin_addr, ip_str, sizeof(ip_str))) {
         close(fd);
         return std::string(ip_str);
       }
