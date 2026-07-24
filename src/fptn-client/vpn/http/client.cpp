@@ -279,4 +279,12 @@ bool Client::IsStarted() const {
   return running_ && reconnection_attempts_ > 0;
 }
 
+void Client::UpdateTunInterfaceAddressIPv4(const IPv4Address& addr) {
+  const std::unique_lock<std::mutex> lock(mutex_);
+  config_.tun_interface_address_ipv4 = addr;
+  if (ws_) {
+    ws_->UpdateTunInterfaceAddressIPv4(addr);
+  }
+}
+
 const std::string& Client::LatestError() const { return latest_error_; }

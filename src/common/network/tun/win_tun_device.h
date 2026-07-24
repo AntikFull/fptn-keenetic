@@ -81,6 +81,8 @@ class WinTunDevice {
 
   [[nodiscard]] const std::string& GetName() const { return name_; }
 
+  [[nodiscard]] std::string GetActualIPv4Address() const { return ""; }
+
   bool ConfigureIPv4(const std::string& addr, int mask) {
     return SetIPAddressEntry(AF_INET, addr, mask);
   }

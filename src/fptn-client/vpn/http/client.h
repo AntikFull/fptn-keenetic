@@ -44,6 +44,7 @@ class Client final {
   bool Send(fptn::common::network::IPPacketPtr packet) const;
   void SetRecvIPPacketCallback(const NewIPPacketCallback& callback) noexcept;
   bool IsStarted() const;
+  void UpdateTunInterfaceAddressIPv4(const IPv4Address& addr);
 
   const std::string& LatestError() const;
 

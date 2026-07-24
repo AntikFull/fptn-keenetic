@@ -11,6 +11,14 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <string>
 #include <tuntap++.hh>  // NOLINT(build/include_order)
 
+#if defined(__linux__)
+#include <arpa/inet.h>
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <cstring>
+#endif
+
 namespace fptn::common::network {
 
 class LinuxTunDevice {
@@ -30,6 +38,28 @@ class LinuxTunDevice {
   }
 
   [[nodiscard]] const std::string& GetName() const { return name_; }
+
+  [[nodiscard]] std::string GetActualIPv4Address() const {
+#if defined(__linux__)
+    if (name_.empty()) return "";
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) return "";
+    struct ifreq ifr;
+    std::memset(&ifr, 0, sizeof(ifr));
+    std::strncpy(ifr.ifr_name, name_.c_str(), IFNAMSIZ - 1);
+    if (ioctl(fd, SIOCGIFADDR, &ifr) >= 0) {
+      struct sockaddr_in* ipaddr =
+          reinterpret_cast<struct sockaddr_in*>(&ifr.ifr_addr);
+      char ip_str[INET_ADDRSTRLEN] = {0};
+      if (inet_ntop(AF_INET, &ipaddr->sin_addr, ip_str, sizeof(ip_str))) {
+        close(fd);
+        return std::string(ip_str);
+      }
+    }
+    close(fd);
+#endif
+    return "";
+  }
 
   bool ConfigureIPv4(const std::string& addr, int mask) {
     tun_->ip(addr, mask);

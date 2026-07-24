@@ -78,6 +78,21 @@ bool VpnManager::Start() {
     return false;
   }
 
+  if (config_.virtual_net_interface) {
+    const std::string actual_ip_str =
+        config_.virtual_net_interface->GetActualIPv4Address();
+    if (!actual_ip_str.empty()) {
+      fptn::common::network::IPv4Address actual_ip(actual_ip_str);
+      if (!actual_ip.IsEmpty()) {
+        SPDLOG_INFO("Actual TUN interface IPv4 address from kernel: {}",
+            actual_ip.ToString());
+        if (config_.http_client) {
+          config_.http_client->UpdateTunInterfaceAddressIPv4(actual_ip);
+        }
+      }
+    }
+  }
+
   if (config_.route_manager) {
     config_.route_manager->Apply(config_.virtual_net_interface->Name());
   }

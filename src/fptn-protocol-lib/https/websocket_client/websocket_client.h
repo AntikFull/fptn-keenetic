@@ -73,6 +73,11 @@ class WebsocketClient : public std::enable_shared_from_this<WebsocketClient> {
   bool Send(fptn::common::network::IPPacketPtr packet);
   bool IsStarted() const;
 
+  void UpdateTunInterfaceAddressIPv4(const IPv4Address& addr) {
+    const std::lock_guard<std::mutex> lock(mutex_);
+    config_.tun_interface_address_ipv4 = addr;
+  }
+
  protected:
   boost::asio::awaitable<bool> RunInternal();
   boost::asio::awaitable<void> RunReader();

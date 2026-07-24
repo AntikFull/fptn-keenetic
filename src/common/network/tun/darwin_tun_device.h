@@ -110,6 +110,8 @@ class DarwinTunDevice {
 
   [[nodiscard]] const std::string& GetName() const { return name_; }
 
+  [[nodiscard]] std::string GetActualIPv4Address() const { return ""; }
+
   bool ConfigureIPv4(const std::string& addr, int mask) {
     // Use ifconfig to set IPv4 address
     const std::string cmd = "ifconfig " + name_ + " inet " + addr + "/" +

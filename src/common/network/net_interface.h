@@ -78,6 +78,10 @@ class BaseNetInterface {
 
   std::size_t GetReceiveRate() { return impl()->GetReceiveRateImpl(); }
 
+  std::string GetActualIPv4Address() {
+    return impl()->GetActualIPv4AddressImpl();
+  }
+
   void SetName(const std::string& name) { name_ = name; }
 
  private:
@@ -250,6 +254,10 @@ class GenericTunInterface final
 
   std::size_t GetReceiveRateImpl() const noexcept {
     return receive_rate_calculator_.GetRateForSecond();
+  }
+
+  std::string GetActualIPv4AddressImpl() const noexcept {
+    return device_.GetActualIPv4Address();
   }
 
   void RunReader() {

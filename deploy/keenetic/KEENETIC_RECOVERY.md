@@ -15,7 +15,8 @@
 
 ### Команда создания архива бэкапа (выполняется в SSH роутера):
 ```bash
-tar -czf /tmp/fptn_keenetic_backup.tar.gz \
+opkg install tar
+/opt/bin/tar -czf /opt/fptn_keenetic_backup.tar.gz \
   /opt/etc/fptn-client.conf \
   /opt/etc/init.d/S53fptn-client \
   /opt/bin/fptn-watchdog.sh \
