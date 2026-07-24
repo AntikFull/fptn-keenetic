@@ -62,15 +62,15 @@ is_port_busy() {
     return 1
 }
 
-# Функция гарантированного считывания ввода пользователя из TTY
+# Функция считывания ввода пользователя с автоподстановкой по таймауту (5 сек)
 read_input() {
     _var_name="$1"
     _default_val="$2"
     _res=""
     if [ -c /dev/tty ]; then
-        read -r _res </dev/tty 2>/dev/null || _res=""
+        read -t 5 -r _res </dev/tty 2>/dev/null || _res=""
     else
-        read -r _res 2>/dev/null || _res=""
+        read -t 5 -r _res 2>/dev/null || _res=""
     fi
     _res=${_res:-$_default_val}
     eval "$_var_name=\"\$_res\""
