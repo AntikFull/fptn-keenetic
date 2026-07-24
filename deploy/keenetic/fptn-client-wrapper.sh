@@ -36,4 +36,9 @@ iptables -I FORWARD 1 -o "$TUN_NAME" -j ACCEPT
 iptables -D FORWARD -i "$TUN_NAME" -j ACCEPT 2>/dev/null || true
 iptables -I FORWARD 1 -i "$TUN_NAME" -j ACCEPT
 
+iptables -t mangle -D FORWARD -o "$TUN_NAME" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+iptables -t mangle -I FORWARD 1 -o "$TUN_NAME" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables -t mangle -D FORWARD -i "$TUN_NAME" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+iptables -t mangle -I FORWARD 1 -i "$TUN_NAME" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+
 wait $CLI_PID
