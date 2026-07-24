@@ -49,11 +49,15 @@ download_file() {
     return 1
 }
 
-# Функция проверки занятости порта / Port busy check
+# Функция проверки занятости порта посторонними сервисами (кроме lighttpd)
 is_port_busy() {
     _p="$1"
-    if netstat -tuln 2>/dev/null | grep -E ":${_p}\s" >/dev/null 2>&1 || ss -tuln 2>/dev/null | grep -E ":${_p}\s" >/dev/null 2>&1; then
-        return 0
+    _listeners=$(netstat -tulnp 2>/dev/null | grep -E ":${_p}\s" 2>/dev/null || netstat -tuln 2>/dev/null | grep -E ":${_p}\s" 2>/dev/null || true)
+    if [ -n "$_listeners" ]; then
+        # Если порт занят НЕ lighttpd (например nginx, xray, adguard)
+        if echo "$_listeners" | grep -v "lighttpd" >/dev/null 2>&1; then
+            return 0
+        fi
     fi
     return 1
 }
