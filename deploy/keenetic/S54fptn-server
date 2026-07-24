@@ -1,0 +1,88 @@
+#!/bin/sh
+
+ENABLED=no
+PORT=8443
+SNI="rutube.ru"
+DISABLE_BITTORRENT=no
+TUN_INTERFACE="opkgsrv1"
+SERVER_BIN="/opt/bin/fptn-server"
+PASSWD_BIN="/opt/bin/fptn-passwd"
+CONF_FILE="/opt/etc/fptn-server.conf"
+USERS_FILE="/opt/etc/fptn-server/users.list"
+KEY_FILE="/opt/etc/fptn-server/server.key"
+CRT_FILE="/opt/etc/fptn-server/server.crt"
+DESC="fptn-server"
+
+if [ -f "$CONF_FILE" ]; then
+    . "$CONF_FILE"
+fi
+
+if [ "$ENABLED" != "yes" ]; then
+    exit 0
+fi
+
+# Подготовка директората и ключей SSL
+mkdir -p /opt/etc/fptn-server
+if [ ! -f "$KEY_FILE" ] || [ ! -f "$CRT_FILE" ]; then
+    openssl req -x509 -newkey rsa:2048 -keyout "$KEY_FILE" -out "$CRT_FILE" -days 3650 -nodes -subj "/CN=fptn-keenetic-server" >/dev/null 2>&1 || true
+fi
+
+if [ ! -f "$USERS_FILE" ]; then
+    touch "$USERS_FILE"
+fi
+
+# Проверка IP форвардинга
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+
+# Включение MASQUERADE и прозрачного DNAT редиректа 53 порта DNS
+iptables -t nat -D POSTROUTING -s 172.20.0.0/24 -j MASQUERADE 2>/dev/null || true
+iptables -t nat -A POSTROUTING -s 172.20.0.0/24 -j MASQUERADE 2>/dev/null || true
+
+iptables -t nat -D PREROUTING -i "$TUN_INTERFACE" -p udp --dport 53 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null || true
+iptables -t nat -A PREROUTING -i "$TUN_INTERFACE" -p udp --dport 53 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null || true
+
+# Регистрация интерфейса в KeeneticOS CLI при наличии
+if which ndmc >/dev/null 2>&1; then
+    KTUN=$(echo "$TUN_INTERFACE" | sed -E 's/opkgsrv([0-9]+)/OpkgSrv\1/i')
+    ndmc -c "interface ${KTUN} description FPTN-Server" >/dev/null 2>&1 || true
+    ndmc -c "interface ${KTUN} security-level private" >/dev/null 2>&1 || true
+    ndmc -c "interface ${KTUN} up" >/dev/null 2>&1 || true
+fi
+
+ARGS="--server-port ${PORT:-8443} --server-crt ${CRT_FILE} --server-key ${KEY_FILE} --user-file ${USERS_FILE} --tun-interface-name ${TUN_INTERFACE} --default-proxy-domain ${SNI:-rutube.ru} --enable-detect-probing"
+
+if [ "$DISABLE_BITTORRENT" = "yes" ]; then
+    ARGS="$ARGS --disable-bittorrent"
+fi
+
+start() {
+    echo -n "Starting $DESC... "
+    if pidof fptn-server >/dev/null; then
+        echo "already running."
+        return 0
+    fi
+    $SERVER_BIN $ARGS >/dev/null 2>&1 &
+    echo "done."
+}
+
+stop() {
+    echo -n "Shutting down $DESC... "
+    killall -9 fptn-server >/dev/null 2>&1 || true
+    echo "done."
+}
+
+status() {
+    if pidof fptn-server >/dev/null; then
+        echo "Checking $DESC... alive."
+    else
+        echo "Checking $DESC... dead."
+    fi
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 1; start ;;
+    status) status ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" ;;
+esac

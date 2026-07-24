@@ -16,37 +16,13 @@ $servers_file = "/opt/etc/fptn-servers.json";
 $cli_path = "/opt/bin/fptn-client-cli";
 $init_script = "/opt/etc/init.d/S53fptn-client";
 
-// Проверяем состояние авторизации перед обработкой AJAX
-$authenticated = isset($_SESSION['auth']) && $_SESSION['auth'] === true;
+// Конфигурация Сервера FPTN
+$server_conf_file = "/opt/etc/fptn-server.conf";
+$server_users_file = "/opt/etc/fptn-server/users.list";
+$server_crt_file = "/opt/etc/fptn-server/server.crt";
+$server_init_script = "/opt/etc/init.d/S54fptn-server";
 
-// Функция для выполнения HTTPS GET запросов без зависимости от расширения php-curl
-function http_get_contents($url, $timeout = 15) {
-    $options = [
-        'http' => [
-            'method' => 'GET',
-            'header' => "User-Agent: FPTN-Keenetic-Client\r\n",
-            'timeout' => $timeout,
-            'follow_location' => 1,
-            'ignore_errors' => true
-        ],
-        'ssl' => [
-            'verify_peer' => false,
-            'verify_peer_name' => false
-        ]
-    ];
-    $context = stream_context_create($options);
-    $data = @file_get_contents($url, false, $context);
-    
-    $code = 0;
-    if (isset($http_response_header) && is_array($http_response_header)) {
-        if (preg_match('/HTTP\/\d\.\d\s+(\d+)/', $http_response_header[0], $matches)) {
-            $code = (int)$matches[1];
-        }
-    }
-    return ['code' => $code, 'data' => $data];
-}
-
-// Инициализация дефолтных значений конфигурации
+// Инициализация дефолтных значений конфигурации клиента
 $config = [
     'ENABLED' => 'no',
     'TOKEN' => '',
@@ -55,6 +31,122 @@ $config = [
     'WATCHDOG' => 'yes',
     'WEB_PASSWORD' => ''
 ];
+
+// Инициализация дефолтных значений конфигурации сервера
+$server_config = [
+    'SERVER_ENABLED' => 'no',
+    'SERVER_PORT' => '8443',
+    'SERVER_SNI' => 'rutube.ru',
+    'DISABLE_BITTORRENT' => 'no',
+    'TUN_INTERFACE' => 'opkgsrv1',
+    'SERVER_HOST' => ''
+];
+
+function read_server_config() {
+    global $server_conf_file, $server_config;
+    if (file_exists($server_conf_file)) {
+        $lines = file($server_conf_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            if (strpos(trim($line), '#') === 0) continue;
+            $line_clean = preg_replace('/^export\s+/', '', trim($line));
+            $parts = explode('=', $line_clean, 2);
+            if (count($parts) == 2) {
+                $key = trim($parts[0]);
+                $val = trim($parts[1], " \t\n\r\0\x0B\"'");
+                if (array_key_exists($key, $server_config)) {
+                    $server_config[$key] = $val;
+                }
+            }
+        }
+    }
+}
+
+function write_server_config() {
+    global $server_conf_file, $server_config;
+    $content = "# Конфигурация сервера FPTN (Создано автоматически / Auto-generated)\n";
+    foreach ($server_config as $k => $v) {
+        $content .= "{$k}=\"{$v}\"\n";
+    }
+    return file_put_contents($server_conf_file, $content, LOCK_EX) !== false;
+}
+
+function get_server_md5_fingerprint() {
+    global $server_crt_file;
+    if (file_exists($server_crt_file)) {
+        $cmd = "openssl x509 -in " . escapeshellarg($server_crt_file) . " -noout -fingerprint -md5 2>/dev/null";
+        $out = shell_exec($cmd);
+        if ($out && preg_match('/MD5 Fingerprint=(.+)/i', trim($out), $m)) {
+            return str_replace(':', '', trim($m[1]));
+        }
+    }
+    return '';
+}
+
+function get_keendns_domain() {
+    $out = shell_exec('ndmc -c "show ip name" 2>/dev/null');
+    if ($out && preg_match('/domain:\s*([a-z0-9\.\-]+)/i', $out, $m)) {
+        return trim($m[1]);
+    }
+    return '';
+}
+
+function get_server_users() {
+    global $server_users_file;
+    $users = [];
+    if (file_exists($server_users_file)) {
+        $lines = file($server_users_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            $parts = preg_split('/\s+/', trim($line));
+            if (count($parts) >= 3) {
+                $users[] = [
+                    'username' => $parts[0],
+                    'hash' => $parts[1],
+                    'bandwidth' => (int)$parts[2]
+                ];
+            }
+        }
+    }
+    return $users;
+}
+
+function add_server_user($username, $password, $bandwidth = 100) {
+    global $server_users_file;
+    if (!preg_match('/^[a-zA-Z0-9_\-]+$/', $username)) return false;
+    $dir = dirname($server_users_file);
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    
+    $users = get_server_users();
+    foreach ($users as $u) {
+        if ($u['username'] === $username) return false;
+    }
+    
+    $hash = hash('sha256', $password);
+    $line = "{$username} {$hash} {$bandwidth}\n";
+    return file_put_contents($server_users_file, $line, FILE_APPEND | LOCK_EX) !== false;
+}
+
+function delete_server_user($username) {
+    global $server_users_file;
+    $users = get_server_users();
+    $new_lines = [];
+    foreach ($users as $u) {
+        if ($u['username'] !== $username) {
+            $new_lines[] = "{$u['username']} {$u['hash']} {$u['bandwidth']}";
+        }
+    }
+    return file_put_contents($server_users_file, implode("\n", $new_lines) . (empty($new_lines) ? '' : "\n"), LOCK_EX) !== false;
+}
+
+function generate_user_token($host, $port, $username, $password, $fingerprint = '') {
+    $token_data = [
+        'host' => $host,
+        'port' => (int)$port,
+        'user' => $username,
+        'password' => $password,
+        'md5_fingerprint' => $fingerprint
+    ];
+    return 'fptnb:' . base64_encode(json_encode($token_data));
+}
 
 // Функция чтения конфигурации
 function read_config() {
