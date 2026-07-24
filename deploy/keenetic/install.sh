@@ -230,7 +230,8 @@ if [ -s "/opt/bin/fptn-client-cli.tmp" ]; then
         echo "Предупреждение: Получена страница ошибки 404 / Warning: Received 404 error page."
         rm -f "/opt/bin/fptn-client-cli.tmp"
         if [ ! -f "/opt/bin/fptn-client-cli" ]; then
-            FALLBACK_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.4-keenetic/fptn-client-cli-${ARCH_SUFFIX}"
+            # Автоматически скачиваем бинарник самого последнего стабильного релиза GitHub (latest release)
+            FALLBACK_URL="https://github.com/AntikFull/fptn-keenetic/releases/latest/download/fptn-client-cli-${ARCH_SUFFIX}"
             download_file "$FALLBACK_URL" "/opt/bin/fptn-client-cli" 180 || true
         fi
     else
