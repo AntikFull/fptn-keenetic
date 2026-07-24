@@ -218,7 +218,21 @@ rm -f /opt/bin/fptn-client-cli
 echo "Скачивание скомпилированного бинарника / Downloading compiled binary..."
 BIN_DIRECT_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/${REMOTE_VER}/fptn-client-cli-${ARCH_SUFFIX}"
 
-if ! download_file "$BIN_DIRECT_URL" "/opt/bin/fptn-client-cli" 180; then
+if download_file "$BIN_DIRECT_URL" "/opt/bin/fptn-client-cli.tmp" 180; then
+    if head -n 1 "/opt/bin/fptn-client-cli.tmp" | grep -qi "Not Found\|DOCTYPE\|404\|error"; then
+        echo "Предупреждение: Файл релиза $REMOTE_VER не найден / Warning: Binary for $REMOTE_VER not found on GitHub."
+        rm -f "/opt/bin/fptn-client-cli.tmp"
+        if [ ! -f "/opt/bin/fptn-client-cli" ]; then
+            echo "Скачивание стабильной версии v1.0.4-keenetic / Downloading stable binary v1.0.4-keenetic..."
+            FALLBACK_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.4-keenetic/fptn-client-cli-${ARCH_SUFFIX}"
+            download_file "$FALLBACK_URL" "/opt/bin/fptn-client-cli" 180 || true
+        fi
+    else
+        mv "/opt/bin/fptn-client-cli.tmp" "/opt/bin/fptn-client-cli"
+    fi
+fi
+
+if [ ! -s "/opt/bin/fptn-client-cli" ]; then
     echo "Ошибка: Не удалось скачать бинарный файл / Error: Failed to download binary: $BIN_DIRECT_URL"
     exit 1
 fi
