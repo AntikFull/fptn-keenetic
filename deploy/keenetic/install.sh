@@ -83,11 +83,25 @@ if is_port_busy "$USER_PORT"; then
     echo "ВНИМАНИЕ: Выбранный порт $USER_PORT сейчас занят! Убедитесь, что нет конфликтов."
 fi
 
+# Проверяем наличие уже существующего конфига для сохранения настроек при обновлении
+PREV_TOKEN=""
+PREV_LTUN=""
+if [ -f "/opt/etc/fptn-client.conf" ]; then
+    . "/opt/etc/fptn-client.conf" 2>/dev/null || true
+    PREV_TOKEN="$TOKEN"
+    PREV_LTUN="$TUN_INTERFACE"
+fi
+
 # Автоподбор свободного имени туннельного интерфейса в KeeneticOS
 DEFAULT_KTUN="OpkgTun1"
 DEFAULT_LTUN="opkgtun1"
 
-if which ndmc >/dev/null 2>&1; then
+if [ -n "$PREV_LTUN" ]; then
+    # Если в предыдущей установке уже был настроен интерфейс (например opkgtun1 / OpkgTun1)
+    DEFAULT_LTUN="$PREV_LTUN"
+    # Преобразуем opkgtun1 -> OpkgTun1
+    DEFAULT_KTUN=$(echo "$PREV_LTUN" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
+elif which ndmc >/dev/null 2>&1; then
     TUN_IDX=1
     while true; do
         C_KTUN="OpkgTun${TUN_IDX}"
@@ -115,13 +129,6 @@ USER_KTUN=${USER_KTUN:-$DEFAULT_KTUN}
 printf "Введите имя интерфейса в Linux/TUN (по умолчанию %s): " "$DEFAULT_LTUN"
 read -r USER_LTUN
 USER_LTUN=${USER_LTUN:-$DEFAULT_LTUN}
-
-# Проверяем наличие уже существующего конфига и сохраняем введенный ранее токен
-PREV_TOKEN=""
-if [ -f "/opt/etc/fptn-client.conf" ]; then
-    . "/opt/etc/fptn-client.conf" 2>/dev/null || true
-    PREV_TOKEN="$TOKEN"
-fi
 
 if [ -n "$PREV_TOKEN" ]; then
     printf "Найден существующий токен подписки [%s...]. Нажмите Enter для сохранения или введите новый: " "$(echo "$PREV_TOKEN" | cut -c 1-12)"
