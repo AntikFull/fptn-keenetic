@@ -262,32 +262,36 @@ fi
 pkill -9 -f "/opt/bin/fptn-client-cli" >/dev/null 2>&1 || true
 rm -f /opt/bin/fptn-client-cli
 
+# Проверка валидности бинарного файла (не менее 1 МБ и отсутствие HTML ошибок)
+check_binary_valid() {
+    _f="$1"
+    if [ ! -s "$_f" ]; then return 1; fi
+    _sz=$(wc -c < "$_f" 2>/dev/null || echo 0)
+    if [ "$_sz" -lt 1000000 ]; then return 1; fi
+    if head -n 1 "$_f" | grep -qi "Not Found\|DOCTYPE\|404\|error"; then return 1; fi
+    return 0
+}
+
 echo "Скачивание скомпилированного бинарника / Downloading compiled binary..."
 BIN_RAW_URL="${GITHUB_RAW_BASE}/deploy/keenetic/bin/fptn-client-cli-${ARCH_SUFFIX}"
 BIN_RELEASE_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/${REMOTE_VER}/fptn-client-cli-${ARCH_SUFFIX}"
+BIN_LATEST_URL="https://github.com/AntikFull/fptn-keenetic/releases/latest/download/fptn-client-cli-${ARCH_SUFFIX}"
 
-# 1. Пробуем скачать напрямую из репозитория
-if ! download_file "$BIN_RAW_URL" "/opt/bin/fptn-client-cli.tmp" 180; then
-    # 2. Если в репозитории файла нет, пробуем скачать из Releases
-    download_file "$BIN_RELEASE_URL" "/opt/bin/fptn-client-cli.tmp" 180 || true
-fi
-
-if [ -s "/opt/bin/fptn-client-cli.tmp" ]; then
-    if head -n 1 "/opt/bin/fptn-client-cli.tmp" | grep -qi "Not Found\|DOCTYPE\|404\|error"; then
-        echo "Предупреждение: Получена страница ошибки 404 / Warning: Received 404 error page."
-        rm -f "/opt/bin/fptn-client-cli.tmp"
-        if [ ! -f "/opt/bin/fptn-client-cli" ]; then
-            # Автоматически скачиваем бинарник самого последнего стабильного релиза GitHub (latest release)
-            FALLBACK_URL="https://github.com/AntikFull/fptn-keenetic/releases/latest/download/fptn-client-cli-${ARCH_SUFFIX}"
-            download_file "$FALLBACK_URL" "/opt/bin/fptn-client-cli" 180 || true
+DOWNLOAD_SUCCESS=no
+for _src_url in "$BIN_RAW_URL" "$BIN_RELEASE_URL" "$BIN_LATEST_URL"; do
+    if download_file "$_src_url" "/opt/bin/fptn-client-cli.tmp" 180; then
+        if check_binary_valid "/opt/bin/fptn-client-cli.tmp"; then
+            mv "/opt/bin/fptn-client-cli.tmp" "/opt/bin/fptn-client-cli"
+            DOWNLOAD_SUCCESS=yes
+            break
+        else
+            rm -f "/opt/bin/fptn-client-cli.tmp"
         fi
-    else
-        mv "/opt/bin/fptn-client-cli.tmp" "/opt/bin/fptn-client-cli"
     fi
-fi
+done
 
-if [ ! -s "/opt/bin/fptn-client-cli" ]; then
-    echo "Ошибка: Не удалось скачать бинарный файл / Error: Failed to download binary: $BIN_RAW_URL"
+if [ "$DOWNLOAD_SUCCESS" != "yes" ] && [ ! -s "/opt/bin/fptn-client-cli" ]; then
+    echo "Ошибка: Не удалось скачать бинарный файл / Error: Failed to download valid binary!"
     exit 1
 fi
 chmod +x /opt/bin/fptn-client-cli
