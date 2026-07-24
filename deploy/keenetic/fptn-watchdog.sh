@@ -36,7 +36,7 @@ if ! ping -c 2 -W 2 1.1.1.1 >/dev/null 2>&1; then
 fi
 
 # 3. Проверяем туннельный интерфейс FPTN
-TUN="${TUN_INTERFACE:-opkgtun1}"
+TUN="${TUN_INTERFACE:-opkgtun11}"
 if ! ip addr show "$TUN" 2>/dev/null | grep -q "inet"; then
     # Интерфейс не имеет активного IP или не готов
     sleep 3
