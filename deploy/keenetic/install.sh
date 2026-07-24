@@ -182,7 +182,7 @@ fi
 # 3. Установка необходимых системных пакетов / Install Entware packages
 echo ""
 echo "[1/7] Обновление пакетов и установка зависимостей / Updating packages & dependencies..."
-opkg update
+opkg update || true
 opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates cron
 
 # 4. Автоопределение архитектуры и скачивание бинарника fptn-client-cli / Detect CPU & Download Binary
