@@ -1148,7 +1148,7 @@ if (!empty($config['TOKEN'])) {
                     </div>
                     <div class="info-row">
                         <span class="info-label">Имя подписки:</span>
-                        <span class="info-value"><?php echo $service_name ? htmlspecialchars($service_name) : 'Неизвестно'; ?></span>
+                        <span class="info-value"><?php echo !empty($service_title) ? $service_title : 'Неизвестно'; ?></span>
                     </div>
                     <div class="info-row">
                         <span class="info-label">PID процесса:</span>
