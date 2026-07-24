@@ -14,6 +14,9 @@ if [ -n "$PREFERRED_SERVER" ]; then
     ARGS="$ARGS --preferred-server $PREFERRED_SERVER"
 fi
 
+mkdir -p /var/log/fptn
+> /var/log/fptn/fptn-client-cli.log 2>/dev/null || true
+
 /opt/bin/fptn-client-cli $ARGS &
 CLI_PID=$!
 
