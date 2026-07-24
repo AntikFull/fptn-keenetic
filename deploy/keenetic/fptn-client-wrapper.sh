@@ -17,7 +17,7 @@ fi
 /opt/bin/fptn-client-cli $ARGS &
 CLI_PID=$!
 
-sleep 3
+sleep 5
 
 # Динамически вытягиваем выданный сервером IP
 ASSIGNED_IP=$(grep -oE 'Received IP assignment from server: IPv4=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)' /var/log/fptn/fptn-client-cli.log 2>/dev/null | tail -n 1 | cut -d'=' -f2)
