@@ -578,8 +578,19 @@ boost::asio::awaitable<void> WebsocketClient::RunReader() {
             common::network::IPv6Address target_ipv6;
             {
               const std::lock_guard<std::mutex> lock(mutex_);
-              target_ipv4 = config_.tun_interface_address_ipv4;
-              target_ipv6 = config_.tun_interface_address_ipv6;
+              if (!config_.tun_interface_address_ipv4.IsEmpty() &&
+                  config_.tun_interface_address_ipv4.ToString() != FPTN_CLIENT_DEFAULT_ADDRESS_IP4) {
+                target_ipv4 = config_.tun_interface_address_ipv4;
+              } else {
+                target_ipv4 = assigned_ipv4_;
+              }
+
+              if (!config_.tun_interface_address_ipv6.IsEmpty() &&
+                  config_.tun_interface_address_ipv6.ToString() != FPTN_CLIENT_DEFAULT_ADDRESS_IP6) {
+                target_ipv6 = config_.tun_interface_address_ipv6;
+              } else {
+                target_ipv6 = assigned_ipv6_;
+              }
             }
             // change IP addresses
             if (packet->IsIPv4()) {
