@@ -216,14 +216,20 @@ pkill -9 -f "/opt/bin/fptn-client-cli" >/dev/null 2>&1 || true
 rm -f /opt/bin/fptn-client-cli
 
 echo "Скачивание скомпилированного бинарника / Downloading compiled binary..."
-BIN_DIRECT_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/${REMOTE_VER}/fptn-client-cli-${ARCH_SUFFIX}"
+BIN_RAW_URL="${GITHUB_RAW_BASE}/deploy/keenetic/bin/fptn-client-cli-${ARCH_SUFFIX}"
+BIN_RELEASE_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/${REMOTE_VER}/fptn-client-cli-${ARCH_SUFFIX}"
 
-if download_file "$BIN_DIRECT_URL" "/opt/bin/fptn-client-cli.tmp" 180; then
+# 1. Пробуем скачать напрямую из репозитория
+if ! download_file "$BIN_RAW_URL" "/opt/bin/fptn-client-cli.tmp" 180; then
+    # 2. Если в репозитории файла нет, пробуем скачать из Releases
+    download_file "$BIN_RELEASE_URL" "/opt/bin/fptn-client-cli.tmp" 180 || true
+fi
+
+if [ -s "/opt/bin/fptn-client-cli.tmp" ]; then
     if head -n 1 "/opt/bin/fptn-client-cli.tmp" | grep -qi "Not Found\|DOCTYPE\|404\|error"; then
-        echo "Предупреждение: Файл релиза $REMOTE_VER не найден / Warning: Binary for $REMOTE_VER not found on GitHub."
+        echo "Предупреждение: Получена страница ошибки 404 / Warning: Received 404 error page."
         rm -f "/opt/bin/fptn-client-cli.tmp"
         if [ ! -f "/opt/bin/fptn-client-cli" ]; then
-            echo "Скачивание стабильной версии v1.0.4-keenetic / Downloading stable binary v1.0.4-keenetic..."
             FALLBACK_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.4-keenetic/fptn-client-cli-${ARCH_SUFFIX}"
             download_file "$FALLBACK_URL" "/opt/bin/fptn-client-cli" 180 || true
         fi
@@ -233,7 +239,7 @@ if download_file "$BIN_DIRECT_URL" "/opt/bin/fptn-client-cli.tmp" 180; then
 fi
 
 if [ ! -s "/opt/bin/fptn-client-cli" ]; then
-    echo "Ошибка: Не удалось скачать бинарный файл / Error: Failed to download binary: $BIN_DIRECT_URL"
+    echo "Ошибка: Не удалось скачать бинарный файл / Error: Failed to download binary: $BIN_RAW_URL"
     exit 1
 fi
 chmod +x /opt/bin/fptn-client-cli
