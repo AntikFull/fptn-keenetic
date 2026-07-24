@@ -408,6 +408,15 @@ WEB_PASSWORD="${CONF_PASS}"
 EOF
 chmod 600 "$CONF_PATH"
 
+if which ndmc >/dev/null 2>&1; then
+    KTUN=$(echo "$USER_LTUN" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
+    ndmc -c "interface ${KTUN} description FPTN-Client" >/dev/null 2>&1 || true
+    ndmc -c "interface ${KTUN} security-level public" >/dev/null 2>&1 || true
+    ndmc -c "interface ${KTUN} ip global 700" >/dev/null 2>&1 || true
+    ndmc -c "interface ${KTUN} up" >/dev/null 2>&1 || true
+    ndmc -c "system configuration save" >/dev/null 2>&1 || true
+fi
+
 # 9. Установка init-скрипта автозапуска службы / Install Init Script
 echo ""
 echo "[7/8] Настройка службы автозапуска / Setting up auto-start service..."
