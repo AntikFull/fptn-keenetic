@@ -24,6 +24,13 @@ curl -fsSL -o /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keeneti
 wget -O /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
 ```
 
+### 🗑️ Полное удаление FPTN:
+Для полного удаления FPTN, веб-панели и туннельного интерфейса с роутера выполните:
+```bash
+curl -fsSL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/uninstall.sh | sh
+```
+*(Или выполните `sh /tmp/install.sh --uninstall`)*
+
 ### Что делает установщик:
 1. **Устанавливает пакеты:** веб-сервер `lighttpd`, `php8-cgi` (для веб-интерфейса), `curl` и сертификаты.
 2. **Определяет архитектуру процессора:** автоматически определяет вашу аппаратную платформу (`aarch64`, `armv7` или `mipsel`) и скачивает подходящий статический бинарник клиента FPTN.

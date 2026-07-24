@@ -27,10 +27,16 @@ curl -fsSL -o /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keeneti
 ```
 *(Или через `wget`, если на роутере нет curl:)*
 ```bash
-wget -O /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
-```
-
 Скрипт автоматически установит все пакеты, скачает бинарный файл под архитектуру вашего процессора (`aarch64`, `armv7`, `mipsel`), создаст туннельный интерфейс в KeeneticOS и настроит веб-панель.
+
+---
+
+### 🗑️ Полное удаление FPTN с роутера:
+Чтобы полностью и бесследно удалить FPTN, службу и туннельный интерфейс, выполните:
+```bash
+curl -fsSL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/uninstall.sh | sh
+```
+*(Или через `install.sh --uninstall`)*
 
 ---
 

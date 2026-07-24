@@ -26,6 +26,13 @@ curl -fsSL -o /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keeneti
 wget -O /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
 ```
 
+### 🗑️ Complete Uninstallation:
+To completely remove FPTN, the web panel, and the tunnel interface from your router, run:
+```bash
+curl -fsSL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/uninstall.sh | sh
+```
+*(Or execute `sh /tmp/install.sh --uninstall`)*
+
 ### What the installer does:
 1. **Installs packages:** Installs required Entware packages (`lighttpd`, `php8-cgi` for the web interface, `curl`, and certificates).
 2. **Detects processor architecture:** Automatically detects your hardware platform (`aarch64`, `armv7`, or `mipsel`) and downloads the appropriate static FPTN client binary.
