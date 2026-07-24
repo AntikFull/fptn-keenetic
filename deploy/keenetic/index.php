@@ -213,6 +213,10 @@ function read_config() {
     }
 }
 
+read_config();
+$password_set = !empty($config['WEB_PASSWORD']);
+$authenticated = !$password_set || (isset($_SESSION['auth']) && $_SESSION['auth'] === true);
+
 // Обработка AJAX запросов (проверка обновлений, автообновление статуса и запуск обновления)
 if (isset($_GET['ajax']) && $authenticated) {
     header('Content-Type: application/json');
@@ -424,9 +428,7 @@ if (empty($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// Флаги состояния авторизации
-$password_set = !empty($config['WEB_PASSWORD']);
-$authenticated = isset($_SESSION['auth']) && $_SESSION['auth'] === true;
+// Флаги состояния авторизации уже вычислены выше для корректной работы AJAX
 
 // Обработка POST-запросов
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
