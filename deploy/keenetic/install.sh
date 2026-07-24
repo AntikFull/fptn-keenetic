@@ -418,9 +418,16 @@ if which ndmc >/dev/null 2>&1; then
     ndmc -c "system configuration save" >/dev/null 2>&1 || true
 fi
 
-# 9. Установка init-скрипта автозапуска службы / Install Init Script
+# 9. Установка init-скрипта автозапуска службы и обертки / Install Init Script & Wrapper
 echo ""
 echo "[7/8] Настройка службы автозапуска / Setting up auto-start service..."
+if [ -f "$SCRIPT_DIR/fptn-client-wrapper.sh" ]; then
+    cp "$SCRIPT_DIR/fptn-client-wrapper.sh" "/opt/bin/fptn-client-wrapper.sh"
+else
+    download_file "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-client-wrapper.sh" "/opt/bin/fptn-client-wrapper.sh" 30 || true
+fi
+chmod 755 /opt/bin/fptn-client-wrapper.sh
+
 if [ -f "$SCRIPT_DIR/S53fptn-client" ]; then
     cp "$SCRIPT_DIR/S53fptn-client" "/opt/etc/init.d/S53fptn-client"
 else

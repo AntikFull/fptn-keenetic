@@ -1,7 +1,7 @@
 #!/bin/sh
 
 ENABLED=no
-PROCS=/opt/bin/fptn-client-cli
+PROCS=/opt/bin/fptn-client-wrapper.sh
 DESC="fptn-client"
 CONF=/opt/etc/fptn-client.conf
 

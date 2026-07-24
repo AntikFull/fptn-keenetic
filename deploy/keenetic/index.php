@@ -180,7 +180,7 @@ if (isset($_GET['ajax']) && $authenticated) {
         if (file_exists($cli_path)) {
             exec("pgrep -x fptn-client-cli || pgrep -f /opt/bin/fptn-client-cli", $pids);
             $pids = array_filter(array_map('trim', $pids), 'is_numeric');
-            if (!empty($pids)) {
+            if (!empty($pids) && ($config['ENABLED'] ?? 'no') === 'yes') {
                 $service_running = true;
                 $pid = implode(", ", $pids);
             }
@@ -516,6 +516,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         } elseif ($action === 'stop') {
                             $config['ENABLED'] = 'no';
                             write_config();
+                            exec("killall -9 fptn-client-cli 2>/dev/null; pkill -9 -f /opt/bin/fptn-client-cli 2>/dev/null");
                         }
                         
                         $cmd = $init_script . " " . $action . " 2>&1";
@@ -533,7 +534,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (file_exists($cli_path)) {
         exec("pgrep -x fptn-client-cli || pgrep -f /opt/bin/fptn-client-cli", $pids);
         $pids = array_filter(array_map('trim', $pids), 'is_numeric');
-        if (!empty($pids)) {
+        if (!empty($pids) && ($config['ENABLED'] ?? 'no') === 'yes') {
             $service_running = true;
             $pid = implode(", ", $pids);
         }
