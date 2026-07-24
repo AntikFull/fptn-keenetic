@@ -855,6 +855,8 @@ if (file_exists($servers_file)) {
                     <div style="font-size: 12px;">Связь с роутером была разорвана во время обновления. Подождите 10-15 секунд и перезагрузите страницу вручную.</div>
                 `;
             }
+        }
+
         const serversData = <?php echo json_encode($servers_data ?? []); ?>;
         let priorityServers = <?php echo json_encode(array_values(array_filter(array_map('trim', explode(',', $config['PREFERRED_SERVER'] ?? ''))))); ?>;
 
