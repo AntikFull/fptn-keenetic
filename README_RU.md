@@ -8,10 +8,20 @@ FPTN — это VPN-технология, созданная с нуля для 
 
 ## Быстрая установка в один клик
 
-Подключитесь к вашему роутеру Keenetic по SSH (у вас должно быть установлено и настроено окружение Entware) и выполните следующую команду:
-
+### 🚀 Стандартная установка:
+Скачайте скрипт установщика во временный файл и запустите его (это необходимо для корректной работы интерактивного ввода в терминале):
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/install.sh)"
+curl -fsSL -o /tmp/install.sh https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/install.sh && sh /tmp/install.sh
+```
+
+### ⚡ Зеркало для РФ (в случае блокировок GitHub):
+Если ваш провайдер или ТСПУ блокирует GitHub (зависает на raw.githubusercontent.com), используйте быстрое CDN-зеркало:
+```bash
+curl -fsSL -o /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
+```
+*(Или через `wget`, если на роутере нет curl:)*
+```bash
+wget -O /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
 ```
 
 ### Что делает установщик:
