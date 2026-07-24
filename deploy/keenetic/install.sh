@@ -62,6 +62,20 @@ is_port_busy() {
     return 1
 }
 
+# Функция гарантированного считывания ввода пользователя из TTY
+read_input() {
+    _var_name="$1"
+    _default_val="$2"
+    _res=""
+    if [ -c /dev/tty ]; then
+        read -r _res </dev/tty 2>/dev/null || _res=""
+    else
+        read -r _res 2>/dev/null || _res=""
+    fi
+    _res=${_res:-$_default_val}
+    eval "$_var_name=\"\$_res\""
+}
+
 # 2. Интерактивный опрос параметров / Interactive Configuration Prompt
 DEFAULT_PORT=8088
 if [ -f "/opt/etc/lighttpd/conf.d/80-nfqws.conf" ]; then
@@ -83,8 +97,7 @@ if is_port_busy "$DEFAULT_PORT"; then
 fi
 
 printf "Введите порт для веб-панели FPTN / Enter FPTN web panel port (default %s): " "$DEFAULT_PORT"
-read -r USER_PORT
-USER_PORT=${USER_PORT:-$DEFAULT_PORT}
+read_input USER_PORT "$DEFAULT_PORT"
 
 if is_port_busy "$USER_PORT"; then
     echo "ВНИМАНИЕ: Выбранный порт $USER_PORT сейчас занят! / WARNING: Selected port $USER_PORT is busy!"
@@ -126,20 +139,17 @@ elif which ndmc >/dev/null 2>&1; then
 fi
 
 printf "Введите имя интерфейса в KeeneticOS / Enter KeeneticOS interface name (default %s): " "$DEFAULT_KTUN"
-read -r USER_KTUN
-USER_KTUN=${USER_KTUN:-$DEFAULT_KTUN}
+read_input USER_KTUN "$DEFAULT_KTUN"
 
 printf "Введите имя интерфейса в Linux/TUN / Enter Linux/TUN interface name (default %s): " "$DEFAULT_LTUN"
-read -r USER_LTUN
-USER_LTUN=${USER_LTUN:-$DEFAULT_LTUN}
+read_input USER_LTUN "$DEFAULT_LTUN"
 
 if [ -n "$PREV_TOKEN" ]; then
     printf "Найден токен [%s...]. Нажмите Enter для сохранения или введите новый / Existing token found [%s...]. Press Enter to keep or type new: " "$(echo "$PREV_TOKEN" | cut -c 1-12)" "$(echo "$PREV_TOKEN" | cut -c 1-12)"
-    read -r USER_TOKEN
-    USER_TOKEN=${USER_TOKEN:-$PREV_TOKEN}
+    read_input USER_TOKEN "$PREV_TOKEN"
 else
     printf "Введите токен подписки FPTN (опционально) / Enter FPTN subscription token (optional): "
-    read -r USER_TOKEN
+    read_input USER_TOKEN ""
 fi
 
 echo ""
@@ -154,8 +164,7 @@ else
 fi
 echo ""
 printf "Продолжить установку? / Continue installation? (y/n, default y): "
-read -r CONFIRM
-CONFIRM=${CONFIRM:-y}
+read_input CONFIRM "y"
 if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
     echo "Установка отменена / Installation cancelled."
     exit 0
