@@ -351,12 +351,8 @@ function write_config() {
     global $conf_file, $config;
     $content = "# Конфигурация клиента FPTN (Создано автоматически)\n";
     foreach ($config as $k => $v) {
-        if ($k === 'WEB_PASSWORD' && !empty($v)) {
-            // Гарантируем, что хэш пароля сохраняется полностью
-            $escaped_v = str_replace("'", "'\\''", $v);
-            $content .= "{$k}='{$escaped_v}'\n";
-            continue;
-        }
+        $escaped_v = str_replace("'", "'\\''", $v);
+        $content .= "{$k}='{$escaped_v}'\n";
     }
     return file_put_contents($conf_file, $content) !== false;
 }
