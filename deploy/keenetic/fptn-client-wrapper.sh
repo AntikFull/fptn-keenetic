@@ -25,6 +25,9 @@ ASSIGNED_IP=$(grep -oE 'Received IP assignment from server: IPv4=([0-9]+\.[0-9]+
 if [ -n "$ASSIGNED_IP" ]; then
     ip addr flush dev "$TUN_NAME" 2>/dev/null || true
     ip addr add "${ASSIGNED_IP}/16" dev "$TUN_NAME" 2>/dev/null || true
+else
+    ip addr flush dev "$TUN_NAME" 2>/dev/null || true
+    ip addr add 172.20.0.2/16 dev "$TUN_NAME" 2>/dev/null || true
 fi
 
 ip link set "$TUN_NAME" up 2>/dev/null || true
