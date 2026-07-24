@@ -20,6 +20,13 @@ CLI_PID=$!
     sleep 2
     ip addr add 10.0.0.2/24 dev "$TUN_NAME" 2>/dev/null || true
     ip link set "$TUN_NAME" up 2>/dev/null || true
+    
+    iptables -t nat -D POSTROUTING -o "$TUN_NAME" -j MASQUERADE 2>/dev/null || true
+    iptables -t nat -I POSTROUTING 1 -o "$TUN_NAME" -j MASQUERADE
+    iptables -D FORWARD -o "$TUN_NAME" -j ACCEPT 2>/dev/null || true
+    iptables -I FORWARD 1 -o "$TUN_NAME" -j ACCEPT
+    iptables -D FORWARD -i "$TUN_NAME" -j ACCEPT 2>/dev/null || true
+    iptables -I FORWARD 1 -i "$TUN_NAME" -j ACCEPT
 ) &
 
 wait $CLI_PID
