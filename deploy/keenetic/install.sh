@@ -62,13 +62,22 @@ is_port_busy() {
     return 1
 }
 
+AUTO_ACCEPT="no"
+if [ "$1" = "-y" ] || [ "$1" = "--auto" ]; then
+    AUTO_ACCEPT="yes"
+fi
+
 # Функция считывания ввода пользователя с подстановкой по умолчанию
 read_input() {
     _var_name="$1"
     _default_val="$2"
     _res=""
-    read -r _res 2>/dev/null || _res=""
-    _res=${_res:-$_default_val}
+    if [ "$AUTO_ACCEPT" = "yes" ]; then
+        _res="$_default_val"
+    else
+        read -r _res 2>/dev/null || _res=""
+        _res=${_res:-$_default_val}
+    fi
     eval "$_var_name=\"\$_res\""
 }
 
