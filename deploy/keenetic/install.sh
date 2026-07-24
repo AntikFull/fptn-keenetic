@@ -235,7 +235,7 @@ else
         echo "Интерфейс $USER_KTUN уже существует / Interface $USER_KTUN already exists."
     else
         echo "Создание интерфейса $USER_KTUN типа OpkgTun / Creating OpkgTun interface $USER_KTUN..."
-        ndmc -c "interface $USER_KTUN type OpkgTun" 2>/dev/null || true
+        ndmc -c "interface $USER_KTUN" 2>/dev/null || ndmc -c "interface $USER_KTUN type OpkgTun" 2>/dev/null || true
     fi
     
     ndmc -c "interface $USER_KTUN description Fptn" 2>/dev/null || true
