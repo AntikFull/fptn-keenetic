@@ -14,7 +14,9 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #if defined(__linux__)
 #include <arpa/inet.h>
 #include <net/if.h>
+#include <netinet/in.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <cstring>
 #endif
