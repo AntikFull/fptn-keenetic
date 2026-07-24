@@ -123,7 +123,7 @@ class WebsocketClient : public std::enable_shared_from_this<WebsocketClient> {
   boost::asio::cancellation_signal cancel_signal_;
   obfuscator::IObfuscatorSPtr obfuscator_;
 
-  const Config config_;
+  Config config_;
 
   IPv4Address assigned_ipv4_;
   IPv6Address assigned_ipv6_;
