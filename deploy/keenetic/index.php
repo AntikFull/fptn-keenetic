@@ -1310,5 +1310,137 @@ if (!empty($config['TOKEN'])) {
             </div>
         <?php endif; ?>
     </div>
+
+    <script>
+        const CSRF_TOKEN = "<?php echo htmlspecialchars($_SESSION['csrf_token'] ?? ''); ?>";
+
+        function toggleVisibility(inputId, btnId) {
+            const input = document.getElementById(inputId);
+            const btn = document.getElementById(btnId);
+            if (!input || !btn) return;
+            if (input.type === 'password') {
+                input.type = 'text';
+                btn.textContent = '🔒 Скрыть';
+            } else {
+                input.type = 'password';
+                btn.textContent = '👁️ Показать';
+            }
+        }
+
+        function checkUpdates() {
+            const btn = document.getElementById('check-update-btn');
+            const block = document.getElementById('update-status-block');
+            if (btn) btn.disabled = true;
+            if (block) {
+                block.style.display = 'block';
+                block.innerHTML = '<span style="color: var(--text-muted);">⏳ Проверка доступных обновлений на GitHub...</span>';
+            }
+
+            fetch('?ajax=check_update')
+                .then(r => r.json())
+                .then(data => {
+                    if (btn) btn.disabled = false;
+                    if (data.success) {
+                        if (data.has_update) {
+                            block.className = 'alert alert-info';
+                            block.style.background = 'rgba(59, 130, 246, 0.08)';
+                            block.style.borderColor = 'rgba(59, 130, 246, 0.3)';
+                            block.innerHTML = `
+                                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                                    <div>
+                                        <b style="color: #60a5fa;">🚀 Доступно новое обновление: ${data.remote_version}</b>
+                                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Текущая версия: ${data.current_version}</div>
+                                    </div>
+                                    <button type="button" class="btn btn-success btn-sm" onclick="installUpdate()" style="padding: 6px 12px; font-size: 12px; white-space: nowrap; cursor: pointer;">⚡ Установить обновление</button>
+                                </div>
+                            `;
+                        } else {
+                            block.className = '';
+                            block.style.background = 'rgba(16, 185, 129, 0.05)';
+                            block.style.borderColor = 'rgba(16, 185, 129, 0.2)';
+                            block.innerHTML = `✅ <b>У вас установлена актуальная версия (${data.current_version}).</b> Обновление не требуется.`;
+                        }
+                    } else {
+                        block.className = '';
+                        block.style.background = 'rgba(239, 68, 68, 0.05)';
+                        block.style.borderColor = 'rgba(239, 68, 68, 0.2)';
+                        block.innerHTML = `❌ <b>Сбой проверки обновлений:</b> ${data.message || 'Неизвестная ошибка'}`;
+                    }
+                })
+                .catch(err => {
+                    if (btn) btn.disabled = false;
+                    if (block) {
+                        block.style.display = 'block';
+                        block.style.background = 'rgba(239, 68, 68, 0.05)';
+                        block.style.borderColor = 'rgba(239, 68, 68, 0.2)';
+                        block.innerHTML = `❌ <b>Сбой сети при проверке обновлений:</b> ${err.message || 'Ошибка соединения'}`;
+                    }
+                });
+        }
+
+        function installUpdate() {
+            const block = document.getElementById('update-status-block');
+            if (block) {
+                block.innerHTML = `
+                    <div style="text-align: center; padding: 8px;">
+                        <div style="font-weight: 600; color: #60a5fa;">📥 Идет установка обновления...</div>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Загрузка клиента fptn-client-cli и интерфейса index.php. Пожалуйста, не закрывайте вкладку...</div>
+                    </div>
+                `;
+            }
+
+            fetch(`?ajax=install_update&csrf_token=${encodeURIComponent(CSRF_TOKEN)}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        if (block) {
+                            block.innerHTML = `✅ <b>${data.message}</b><br><span style="font-size: 11px;">Перезагрузка страницы через 3 секунды...</span>`;
+                        }
+                        setTimeout(() => { window.location.reload(); }, 3000);
+                    } else {
+                        if (block) {
+                            block.innerHTML = `❌ <b>Ошибка установки:</b> ${data.message}`;
+                        }
+                    }
+                })
+                .catch(err => {
+                    if (block) {
+                        block.innerHTML = `❌ <b>Сбой установки обновления:</b> ${err.message}`;
+                    }
+                });
+        }
+
+        // Автоматический мониторинг статуса службы каждые 5 секунд
+        setInterval(() => {
+            fetch('?ajax=get_status')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        const badge = document.getElementById('service-status-badge');
+                        const text = document.getElementById('service-status-text');
+                        const pidVal = document.getElementById('service-pid-val');
+                        const ifaceStatus = document.getElementById('iface-status-val');
+                        const ifaceIp = document.getElementById('iface-ip-val');
+
+                        if (badge && text) {
+                            if (data.service_running) {
+                                badge.className = 'status-badge active';
+                                text.textContent = 'Служба работает';
+                            } else {
+                                badge.className = 'status-badge inactive';
+                                text.textContent = 'Служба остановлена';
+                            }
+                        }
+                        if (pidVal) pidVal.textContent = data.pid;
+                        if (ifaceStatus) {
+                            ifaceStatus.textContent = data.interface_status;
+                            ifaceStatus.style.color = data.interface_status === 'Активен' ? 'var(--accent-green)' : 'var(--text-muted)';
+                        }
+                        if (ifaceIp) ifaceIp.textContent = data.interface_ip;
+                    }
+                })
+                .catch(() => {});
+        }, 5000);
+    </script>
 </body>
 </html>
