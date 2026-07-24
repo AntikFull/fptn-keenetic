@@ -5,8 +5,8 @@ PROCS=/opt/bin/fptn-client-cli
 DESC="fptn-client"
 CONF=/opt/etc/fptn-client.conf
 
-if [ -f $CONF ]; then
-    . $CONF
+if [ -f "$CONF" ]; then
+    . "$CONF"
 fi
 
 if [ "$ENABLED" != "yes" ]; then
@@ -26,7 +26,7 @@ if [ -n "$PREFERRED_SERVER" ]; then
     ARGS="$ARGS --preferred-server $PREFERRED_SERVER"
 fi
 
-PRECMD="ip link delete ${TUN_INTERFACE:-opkgtun1} >/dev/null 2>&1 || true"
+PRECMD=""
 PREARGS=""
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

@@ -17,8 +17,11 @@ if [ "$ENABLED" != "yes" ] || [ "$WATCHDOG" != "yes" ]; then
     exit 0
 fi
 
+LOG_DIR="/opt/var/log"
+mkdir -p "$LOG_DIR"
+
 # 1. Проверяем, запущен ли сам процесс fptn-client-cli
-if ! pgrep -f "/opt/bin/fptn-client-cli" >/dev/null 2>&1; then
+if ! (pgrep -x fptn-client-cli || pgrep -f "/opt/bin/fptn-client-cli") >/dev/null 2>&1; then
     # Если процесс упал, но служба включена - запускаем
     /opt/etc/init.d/S53fptn-client start
     rm -f "$STATUS_FILE"
@@ -32,12 +35,12 @@ if ! ping -c 2 -W 2 1.1.1.1 >/dev/null 2>&1; then
     exit 0
 fi
 
-# 3. Проверяем туннель FPTN
+# 3. Проверяем туннельный интерфейс FPTN
 TUN="${TUN_INTERFACE:-opkgtun1}"
-if ! ping -c 2 -W 2 -I "$TUN" 8.8.8.8 >/dev/null 2>&1; then
-    # Первый сбой. Подождем 5 секунд и проверим другой надежный хост
-    sleep 5
-    if ! ping -c 2 -W 2 -I "$TUN" 1.1.1.1 >/dev/null 2>&1; then
+if ! ip addr show "$TUN" 2>/dev/null | grep -q "inet"; then
+    # Интерфейс не имеет активного IP или не готов
+    sleep 3
+    if ! ip addr show "$TUN" 2>/dev/null | grep -q "inet"; then
         
         # Туннель действительно не отвечает.
         # 4. [ЗАЩИТА CPU] Проверка лимита перезапусков
@@ -58,7 +61,7 @@ if ! ping -c 2 -W 2 -I "$TUN" 8.8.8.8 >/dev/null 2>&1; then
         if [ $RESTARTS -ge 3 ]; then
             # Мы уже пробовали 3 раза перезапустить службу, но безуспешно.
             # Блокируем перезапуски на 20 минут, чтобы не нагружать процессор роутера.
-            echo "$(date): VPN tunnel is down, but limit of 3 restarts exceeded. Postponing next retry..." >> /opt/var/log/fptn-watchdog.log
+            echo "$(date): VPN tunnel is down, but limit of 3 restarts exceeded. Postponing next retry..." >> "$LOG_DIR/fptn-watchdog.log"
             exit 0
         fi
         
@@ -67,12 +70,36 @@ if ! ping -c 2 -W 2 -I "$TUN" 8.8.8.8 >/dev/null 2>&1; then
         echo "RESTARTS=$RESTARTS" > "$STATUS_FILE"
         echo "LAST_RESTART=$NOW" >> "$STATUS_FILE"
         
-        echo "$(date): FPTN connection lost on $TUN (attempt $RESTARTS/3). Restarting service..." >> /opt/var/log/fptn-watchdog.log
+        echo "$(date): FPTN connection lost on $TUN (attempt $RESTARTS/3). Restarting service..." >> "$LOG_DIR/fptn-watchdog.log"
         /opt/etc/init.d/S53fptn-client restart
     fi
 else
-    # Если туннель ожил или работает стабильно - сбрасываем статус перезапусков
+    # Если туннель ожил и работает стабильно - сбрасываем статус перезапусков
     if [ -f "$STATUS_FILE" ]; then
         rm -f "$STATUS_FILE"
+    fi
+    
+    # 4. [FAILBACK] Проверка возможности возврата на 1-й (основной) сервер
+    if [ -n "$PREFERRED_SERVER" ]; then
+        MAIN_SERVER=$(echo "$PREFERRED_SERVER" | cut -d',' -f1 | tr -d ' ')
+        if [ -n "$MAIN_SERVER" ]; then
+            LAST_FAILBACK_CHECK_FILE="/tmp/fptn-failback.last"
+            NOW=$(date +%s)
+            LAST_CHECK=0
+            if [ -f "$LAST_FAILBACK_CHECK_FILE" ]; then
+                LAST_CHECK=$(cat "$LAST_FAILBACK_CHECK_FILE")
+            fi
+            # Выполняем проверку возврата не чаще раз в 15 минут (900 сек)
+            if [ $((NOW - LAST_CHECK)) -ge 900 ]; then
+                echo "$NOW" > "$LAST_FAILBACK_CHECK_FILE"
+                # Если служба сейчас работает на резервном сервере, перезапускаем для автовозврата на №1
+                if grep -q "Selected preferred server by priority" /opt/var/log/fptn-client.log 2>/dev/null; then
+                    if ! grep -q "Selected preferred server by priority: ${MAIN_SERVER}" /opt/var/log/fptn-client.log 2>/dev/null; then
+                        echo "$(date): Attempting failback to primary server ${MAIN_SERVER}..." >> "$LOG_DIR/fptn-watchdog.log"
+                        /opt/etc/init.d/S53fptn-client restart
+                    fi
+                fi
+            fi
+        fi
     fi
 fi

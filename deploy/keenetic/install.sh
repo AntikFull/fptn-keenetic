@@ -18,7 +18,40 @@ if [ ! -d "/opt/etc" ] || [ ! -x "/opt/bin/opkg" ]; then
 fi
 
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master"
-GITHUB_DL_BASE="https://ghproxy.net/https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.4-keenetic"
+# Динамическое определение версии релиза из version.txt
+REMOTE_VER=$(curl -sL --connect-timeout 5 "${GITHUB_RAW_BASE}/deploy/keenetic/version.txt" 2>/dev/null | tr -d '\r\n')
+if [ -z "$REMOTE_VER" ]; then
+    REMOTE_VER="v1.0.5-keenetic"
+fi
+
+# Универсальная функция скачивания с каскадом прокси-зеркал для РФ
+download_file() {
+    _url="$1"
+    _dest="$2"
+    _timeout="${3:-120}"
+
+    if curl -sSL --connect-timeout 10 --max-time "$_timeout" -o "$_dest" "$_url"; then
+        if [ -s "$_dest" ]; then return 0; fi
+    fi
+
+    # Пробуем каскад зеркал
+    for _prefix in "https://ghproxy.net/" "https://ghfast.top/" "https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/"; do
+        _mirror_url="${_prefix}${_url}"
+        if curl -sSL --connect-timeout 10 --max-time "$_timeout" -o "$_dest" "$_mirror_url"; then
+            if [ -s "$_dest" ]; then return 0; fi
+        fi
+    done
+    return 1
+}
+
+# Функция проверки занятости порта
+is_port_busy() {
+    _p="$1"
+    if netstat -tuln 2>/dev/null | grep -E ":${_p}\s" >/dev/null 2>&1 || ss -tuln 2>/dev/null | grep -E ":${_p}\s" >/dev/null 2>&1; then
+        return 0
+    fi
+    return 1
+}
 
 # 2. Интерактивный опрос параметров
 # Пытаемся определить текущий порт веб-сервера lighttpd
@@ -30,22 +63,74 @@ if [ -f "/opt/etc/lighttpd/conf.d/80-nfqws.conf" ]; then
     fi
 fi
 
+# Проверяем, свободен ли дефолтный порт
+if is_port_busy "$DEFAULT_PORT"; then
+    echo "Предупреждение: Порт $DEFAULT_PORT уже занят другим сервисом в системе!"
+    # Ищем первый свободный порт начиная с 8089
+    CHECK_P=8089
+    while is_port_busy "$CHECK_P"; do
+        CHECK_P=$((CHECK_P + 1))
+    done
+    DEFAULT_PORT=$CHECK_P
+    echo "Автоматически выбран свободный порт: $DEFAULT_PORT"
+fi
+
 printf "Введите порт для веб-панели FPTN (по умолчанию %s): " "$DEFAULT_PORT"
 read -r USER_PORT
 USER_PORT=${USER_PORT:-$DEFAULT_PORT}
 
+if is_port_busy "$USER_PORT"; then
+    echo "ВНИМАНИЕ: Выбранный порт $USER_PORT сейчас занят! Убедитесь, что нет конфликтов."
+fi
+
+# Автоподбор свободного имени туннельного интерфейса в KeeneticOS
 DEFAULT_KTUN="OpkgTun1"
+DEFAULT_LTUN="opkgtun1"
+
+if which ndmc >/dev/null 2>&1; then
+    TUN_IDX=1
+    while true; do
+        C_KTUN="OpkgTun${TUN_IDX}"
+        C_LTUN="opkgtun${TUN_IDX}"
+        IF_INFO=$(ndmc -c "show interface $C_KTUN" 2>/dev/null || true)
+        if echo "$IF_INFO" | grep -q "Command error"; then
+            # Интерфейс свободен
+            DEFAULT_KTUN=$C_KTUN
+            DEFAULT_LTUN=$C_LTUN
+            break
+        elif echo "$IF_INFO" | grep -qi "Fptn"; then
+            # Этот интерфейс уже принадлежит FPTN
+            DEFAULT_KTUN=$C_KTUN
+            DEFAULT_LTUN=$C_LTUN
+            break
+        fi
+        TUN_IDX=$((TUN_IDX + 1))
+    done
+fi
+
 printf "Введите имя интерфейса в KeeneticOS (по умолчанию %s): " "$DEFAULT_KTUN"
 read -r USER_KTUN
 USER_KTUN=${USER_KTUN:-$DEFAULT_KTUN}
 
-DEFAULT_LTUN="opkgtun1"
 printf "Введите имя интерфейса в Linux/TUN (по умолчанию %s): " "$DEFAULT_LTUN"
 read -r USER_LTUN
 USER_LTUN=${USER_LTUN:-$DEFAULT_LTUN}
 
-printf "Введите токен подписки FPTN (опционально, можно ввести позже в панели): "
-read -r USER_TOKEN
+# Проверяем наличие уже существующего конфига и сохраняем введенный ранее токен
+PREV_TOKEN=""
+if [ -f "/opt/etc/fptn-client.conf" ]; then
+    . "/opt/etc/fptn-client.conf" 2>/dev/null || true
+    PREV_TOKEN="$TOKEN"
+fi
+
+if [ -n "$PREV_TOKEN" ]; then
+    printf "Найден существующий токен подписки [%s...]. Нажмите Enter для сохранения или введите новый: " "$(echo "$PREV_TOKEN" | cut -c 1-12)"
+    read -r USER_TOKEN
+    USER_TOKEN=${USER_TOKEN:-$PREV_TOKEN}
+else
+    printf "Введите токен подписки FPTN (опционально, можно ввести позже в панели): "
+    read -r USER_TOKEN
+fi
 
 echo ""
 echo "Параметры установки:"
@@ -70,7 +155,7 @@ fi
 echo ""
 echo "[1/7] Обновление пакетов и установка зависимостей..."
 opkg update
-opkg install lighttpd php8-cgi php8-mod-openssl curl ca-bundle ca-certificates cron
+opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates cron
 
 # 4. Автоопределение архитектуры и скачивание бинарника fptn-client-cli
 echo ""
@@ -107,16 +192,13 @@ pkill -9 -f "/opt/bin/fptn-client-cli" >/dev/null 2>&1 || true
 rm -f /opt/bin/fptn-client-cli
 
 echo "Скачивание скомпилированного бинарника..."
+DOWNLOAD_URL="${GITHUB_RAW_BASE}/../../releases/download/${REMOTE_VER}/fptn-client-cli-${ARCH_SUFFIX}"
+BIN_DIRECT_URL="https://github.com/AntikFull/fptn-keenetic/releases/download/${REMOTE_VER}/fptn-client-cli-${ARCH_SUFFIX}"
 
-DOWNLOAD_URL="${GITHUB_DL_BASE}/fptn-client-cli-${ARCH_SUFFIX}"
-if ! curl -L --connect-timeout 10 --max-time 120 -o /opt/bin/fptn-client-cli "$DOWNLOAD_URL"; then
-    echo "Прямое скачивание не удалось или зависло. Повторная попытка через прокси-зеркало ghproxy.net..."
-    PROXY_DOWNLOAD_URL="https://ghproxy.net/${DOWNLOAD_URL}"
-    if ! curl -L --connect-timeout 15 --max-time 180 -o /opt/bin/fptn-client-cli "$PROXY_DOWNLOAD_URL"; then
-        echo "Ошибка: Не удалось скачать бинарный файл по адресу: $DOWNLOAD_URL"
-        echo "Проверьте интернет-соединение или доступность релиза на GitHub."
-        exit 1
-    fi
+if ! download_file "$BIN_DIRECT_URL" "/opt/bin/fptn-client-cli" 180; then
+    echo "Ошибка: Не удалось скачать бинарный файл с релиза: $BIN_DIRECT_URL"
+    echo "Проверьте интернет-соединение или доступность релиза на GitHub."
+    exit 1
 fi
 chmod +x /opt/bin/fptn-client-cli
 
@@ -172,6 +254,7 @@ fi
 if [ "$USER_PORT" -eq "$GLOBAL_PORT" ]; then
     cat << 'EOF' > "$LIGHTTPD_CONF_DIR/85-fptn.conf"
 # Настройки веб-интерфейса FPTN
+server.modules += ( "mod_cgi" )
 $HTTP["url"] =~ "^/fptn/" {
     cgi.assign = ( ".php" => "/opt/bin/php-cgi" )
     static-file.exclude-extensions += ( ".php" )
@@ -181,6 +264,7 @@ else
     # Если порт другой, вешаем на отдельный сокет
     cat << EOF > "$LIGHTTPD_CONF_DIR/85-fptn.conf"
 # Настройки веб-интерфейса FPTN на кастомном порту $USER_PORT
+server.modules += ( "mod_cgi" )
 \$SERVER["socket"] == ":$USER_PORT" {
     \$HTTP["url"] =~ "^/fptn/" {
         cgi.assign = ( ".php" => "/opt/bin/php-cgi" )
@@ -200,33 +284,42 @@ WWW_DIR="/opt/share/www/fptn"
 mkdir -p "$WWW_DIR"
 
 SCRIPT_DIR=$(dirname "$0")
-# Если файлы запускаются локально из репозитория
 if [ -f "$SCRIPT_DIR/index.php" ]; then
     cp "$SCRIPT_DIR/index.php" "$WWW_DIR/index.php"
 else
-    # Иначе скачиваем из GitHub
-    if ! curl -L -o "$WWW_DIR/index.php" "${GITHUB_RAW_BASE}/deploy/keenetic/index.php"; then
-        echo "Прямое скачивание index.php не удалось. Попытка через зеркало..."
-        if ! curl -L -o "$WWW_DIR/index.php" "https://ghproxy.net/${GITHUB_RAW_BASE}/deploy/keenetic/index.php"; then
-            echo "Ошибка: Не удалось скачать index.php"
-            exit 1
-        fi
+    if ! download_file "${GITHUB_RAW_BASE}/deploy/keenetic/index.php" "$WWW_DIR/index.php" 30; then
+        echo "Ошибка: Не удалось скачать index.php"
+        exit 1
     fi
 fi
 chmod 644 "$WWW_DIR/index.php"
 
-# 8. Создание файла конфигурации FPTN службы
+# 8. Создание/Обновление файла конфигурации FPTN службы
 echo ""
-echo "[6/8] Создание файла конфигурации FPTN..."
-cat << EOF > /opt/etc/fptn-client.conf
+echo "[6/8] Сохранение конфигурации FPTN..."
+CONF_PATH="/opt/etc/fptn-client.conf"
+CONF_ENABLED="no"
+CONF_SERVERS=""
+CONF_WATCHDOG="yes"
+CONF_PASS=""
+
+if [ -f "$CONF_PATH" ]; then
+    CONF_ENABLED=$(grep -E "^ENABLED=" "$CONF_PATH" | cut -d'=' -f2- | tr -d "\"'" || echo "no")
+    CONF_SERVERS=$(grep -E "^PREFERRED_SERVER=" "$CONF_PATH" | cut -d'=' -f2- | tr -d "\"'" || echo "")
+    CONF_WATCHDOG=$(grep -E "^WATCHDOG=" "$CONF_PATH" | cut -d'=' -f2- | tr -d "\"'" || echo "yes")
+    CONF_PASS=$(grep -E "^WEB_PASSWORD=" "$CONF_PATH" | cut -d'=' -f2- | tr -d "\"'" || echo "")
+fi
+
+cat << EOF > "$CONF_PATH"
 # Конфигурация клиента FPTN (Создано автоматически)
-ENABLED="no"
+ENABLED="${CONF_ENABLED:-no}"
 TOKEN="$USER_TOKEN"
-PREFERRED_SERVER=""
+PREFERRED_SERVER="${CONF_SERVERS}"
 TUN_INTERFACE="$USER_LTUN"
-WATCHDOG="yes"
+WATCHDOG="${CONF_WATCHDOG:-yes}"
+WEB_PASSWORD="${CONF_PASS}"
 EOF
-chmod 600 /opt/etc/fptn-client.conf
+chmod 600 "$CONF_PATH"
 
 # 9. Установка init-скрипта автозапуска службы
 echo ""
@@ -234,12 +327,9 @@ echo "[7/8] Настройка службы автозапуска..."
 if [ -f "$SCRIPT_DIR/S53fptn-client" ]; then
     cp "$SCRIPT_DIR/S53fptn-client" "/opt/etc/init.d/S53fptn-client"
 else
-    if ! curl -L -o "/opt/etc/init.d/S53fptn-client" "${GITHUB_RAW_BASE}/deploy/keenetic/S53fptn-client"; then
-        echo "Прямое скачивание S53fptn-client не удалось. Попытка через зеркало..."
-        if ! curl -L -o "/opt/etc/init.d/S53fptn-client" "https://ghproxy.net/${GITHUB_RAW_BASE}/deploy/keenetic/S53fptn-client"; then
-            echo "Ошибка: Не удалось скачать init-скрипт"
-            exit 1
-        fi
+    if ! download_file "${GITHUB_RAW_BASE}/deploy/keenetic/S53fptn-client" "/opt/etc/init.d/S53fptn-client" 30; then
+        echo "Ошибка: Не удалось скачать init-скрипт"
+        exit 1
     fi
 fi
 chmod 755 /opt/etc/init.d/S53fptn-client
@@ -250,14 +340,8 @@ echo "[8/8] Настройка автопинг-наблюдателя (Watchdog
 if [ -f "$SCRIPT_DIR/fptn-watchdog.sh" ]; then
     cp "$SCRIPT_DIR/fptn-watchdog.sh" "/opt/bin/fptn-watchdog.sh"
 else
-    if ! curl -L -o "/opt/bin/fptn-watchdog.sh" "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-watchdog.sh"; then
-        echo "Прямое скачивание fptn-watchdog.sh не удалось. Попытка через зеркало..."
-        if ! curl -L -o "/opt/bin/fptn-watchdog.sh" "https://ghproxy.net/${GITHUB_RAW_BASE}/deploy/keenetic/fptn-watchdog.sh"; then
-            echo "Ошибка: Не удалось скачать watchdog-скрипт"
-            exit 1
-        fi
-    fi
-fi
+    if ! download_file "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-watchdog.sh" "/opt/bin/fptn-watchdog.sh" 30; then
+        echo "Ошибка: Не удалось скачать watchdog-скрипт"
 chmod 755 /opt/bin/fptn-watchdog.sh
 
 # Прописываем задачу в кронтаб Entware

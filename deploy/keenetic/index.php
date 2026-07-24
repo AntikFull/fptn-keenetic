@@ -7,7 +7,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.0.4-keenetic');
+define('CURRENT_VERSION', 'v1.0.5-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -46,10 +46,75 @@ function http_get_contents($url, $timeout = 15) {
     return ['code' => $code, 'data' => $data];
 }
 
-// Обработка AJAX запросов (проверка обновлений и запуск обновления)
+// Инициализация дефолтных значений конфигурации
+$config = [
+    'ENABLED' => 'no',
+    'TOKEN' => '',
+    'PREFERRED_SERVER' => '',
+    'TUN_INTERFACE' => 'opkgtun1',
+    'WATCHDOG' => 'yes',
+    'WEB_PASSWORD' => ''
+];
+
+// Функция чтения конфигурации
+function read_config() {
+    global $conf_file, $config;
+    if (file_exists($conf_file)) {
+        $lines = file($conf_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        foreach ($lines as $line) {
+            if (strpos(trim($line), '#') === 0) continue;
+            $line_clean = preg_replace('/^export\s+/', '', trim($line));
+            $parts = explode('=', $line_clean, 2);
+            if (count($parts) == 2) {
+                $key = trim($parts[0]);
+                $val = trim($parts[1], " \t\n\r\0\x0B\"'");
+                if (array_key_exists($key, $config)) {
+                    $config[$key] = $val;
+                }
+            }
+        }
+    }
+}
+
+// Обработка AJAX запросов (проверка обновлений, автообновление статуса и запуск обновления)
 if (isset($_GET['ajax']) && $authenticated) {
     header('Content-Type: application/json');
     $ajax_action = $_GET['ajax'];
+    
+    if ($ajax_action === 'get_status') {
+        read_config();
+        $service_running = false;
+        $pid = null;
+        if (file_exists($cli_path)) {
+            exec("pgrep -x fptn-client-cli || pgrep -f /opt/bin/fptn-client-cli", $pids);
+            $pids = array_filter(array_map('trim', $pids), 'is_numeric');
+            if (!empty($pids)) {
+                $service_running = true;
+                $pid = implode(", ", $pids);
+            }
+        }
+        $interface_status = 'Не активен';
+        $interface_ip = '';
+        exec("ip addr show " . escapeshellarg($config['TUN_INTERFACE']) . " 2>/dev/null", $ip_output, $ip_status);
+        if ($ip_status === 0 && !empty($ip_output)) {
+            $interface_status = 'Активен';
+            foreach ($ip_output as $line) {
+                if (preg_match('/inet\s+([0-9\.]+)/', $line, $matches)) {
+                    $interface_ip = $matches[1];
+                    break;
+                }
+            }
+        }
+        echo json_encode([
+            'success' => true,
+            'service_running' => $service_running,
+            'pid' => $pid ? $pid : '—',
+            'interface_name' => $config['TUN_INTERFACE'],
+            'interface_status' => $interface_status,
+            'interface_ip' => $interface_ip ? $interface_ip : '—'
+        ]);
+        exit;
+    }
     
     if ($ajax_action === 'check_update') {
         $github_raw_url = 'https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt';
@@ -189,43 +254,13 @@ if (isset($_GET['ajax']) && $authenticated) {
     }
 }
 
-// Инициализация дефолтных значений (убрали Go-переменные)
-$config = [
-    'ENABLED' => 'no',
-    'TOKEN' => '',
-    'PREFERRED_SERVER' => '',
-    'TUN_INTERFACE' => 'opkgtun1',
-    'WATCHDOG' => 'yes', // Автопинг-наблюдатель для перезапуска при зависании серверов
-    'WEB_PASSWORD' => '' // Хэш пароля для доступа к веб-панели
-];
-
-// Функция чтения конфигурации
-function read_config() {
-    global $conf_file, $config;
-    if (file_exists($conf_file)) {
-        $lines = file($conf_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        foreach ($lines as $line) {
-            if (strpos(trim($line), '#') === 0) continue;
-            // Убираем префикс export, если он есть
-            $line_clean = preg_replace('/^export\s+/', '', trim($line));
-            $parts = explode('=', $line_clean, 2);
-            if (count($parts) == 2) {
-                $key = trim($parts[0]);
-                $val = trim($parts[1], " \t\n\r\0\x0B\"'");
-                if (array_key_exists($key, $config)) {
-                    $config[$key] = $val;
-                }
-            }
-        }
-    }
-}
-
-// Функция записи конфигурации (без Go-переменных)
+// Функция записи конфигурации (используем одинарные кавычки для предотвращения раскрытия $ в shell)
 function write_config() {
     global $conf_file, $config;
     $content = "# Конфигурация клиента FPTN (Создано автоматически)\n";
     foreach ($config as $k => $v) {
-        $content .= "{$k}=\"{$v}\"\n";
+        $escaped_v = str_replace("'", "'\\''", $v);
+        $content .= "{$k}='{$escaped_v}'\n";
     }
     return file_put_contents($conf_file, $content) !== false;
 }
@@ -236,7 +271,8 @@ read_config();
 $service_running = false;
 $pid = null;
 if (file_exists($cli_path)) {
-    exec("pgrep -f fptn-client-cli", $pids);
+    exec("pgrep -x fptn-client-cli || pgrep -f /opt/bin/fptn-client-cli", $pids);
+    $pids = array_filter(array_map('trim', $pids), 'is_numeric');
     if (!empty($pids)) {
         $service_running = true;
         $pid = implode(", ", $pids);
@@ -320,8 +356,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             if ($return_var === 0) {
                                 $json_str = implode("\n", $output);
                                 $json_start = strpos($json_str, '{');
-                                if ($json_start !== false) {
-                                    $json_str = substr($json_str, $json_start);
+                                $json_end = strrpos($json_str, '}');
+                                if ($json_start !== false && $json_end !== false && $json_end > $json_start) {
+                                    $json_str = substr($json_str, $json_start, $json_end - $json_start + 1);
                                 }
                                 $parsed = json_decode($json_str, true);
                                 if ($parsed && isset($parsed['servers'])) {
@@ -346,10 +383,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 
                 elseif ($action === 'save_server') {
-                    $server = trim($_POST['server']);
+                    $servers_input = $_POST['servers'] ?? [];
+                    if (is_array($servers_input)) {
+                        $clean_servers = array_filter(array_map('trim', $servers_input));
+                        $server = implode(',', $clean_servers);
+                    } else {
+                        $server = trim($_POST['server'] ?? '');
+                    }
                     $config['PREFERRED_SERVER'] = $server;
                     if (write_config()) {
-                        $message = 'Предпочтительный сервер обновлен на: ' . ($server ? htmlspecialchars($server) : 'Автовыбор');
+                        $message = 'Список серверов по приоритету обновлен: ' . ($server ? htmlspecialchars($server) : 'Автовыбор');
                         
                         if ($service_running) {
                             $cmd = $init_script . " restart 2>&1";
@@ -396,7 +439,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $service_running = false;
     $pid = null;
     if (file_exists($cli_path)) {
-        exec("pgrep -f fptn-client-cli", $pids);
+        exec("pgrep -x fptn-client-cli || pgrep -f /opt/bin/fptn-client-cli", $pids);
+        $pids = array_filter(array_map('trim', $pids), 'is_numeric');
         if (!empty($pids)) {
             $service_running = true;
             $pid = implode(", ", $pids);
@@ -811,7 +855,108 @@ if (file_exists($servers_file)) {
                     <div style="font-size: 12px;">Связь с роутером была разорвана во время обновления. Подождите 10-15 секунд и перезагрузите страницу вручную.</div>
                 `;
             }
+        const serversData = <?php echo json_encode($servers_data ?? []); ?>;
+        let priorityServers = <?php echo json_encode(array_values(array_filter(array_map('trim', explode(',', $config['PREFERRED_SERVER'] ?? ''))))); ?>;
+
+        function renderPriorityList() {
+            const listEl = document.getElementById('priority-server-list');
+            const hintEl = document.getElementById('auto-select-hint');
+            if (!listEl) return;
+            listEl.innerHTML = '';
+            
+            if (priorityServers.length === 0) {
+                if (hintEl) hintEl.style.display = 'block';
+                return;
+            }
+            if (hintEl) hintEl.style.display = 'none';
+
+            priorityServers.forEach((name, idx) => {
+                const li = document.createElement('li');
+                li.style.cssText = 'display: flex; align-items: center; justify-content: space-between; background: #1f293d; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;';
+                
+                const badge = idx === 0 ? '🥇 1 (Основной): ' : (idx === 1 ? '🥈 2 (Резерв 1): ' : `🥉 ${idx + 1} (Резерв ${idx}): `);
+                
+                li.innerHTML = `
+                    <input type="hidden" name="servers[]" value="${name}">
+                    <span style="font-weight: 500;">${badge}${name}</span>
+                    <div style="display: flex; gap: 4px;">
+                        ${idx > 0 ? `<button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 11px;" onclick="movePriority(${idx}, -1)">⬆</button>` : ''}
+                        ${idx < priorityServers.length - 1 ? `<button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 11px;" onclick="movePriority(${idx}, 1)">⬇</button>` : ''}
+                        <button type="button" class="btn btn-danger" style="padding: 2px 6px; font-size: 11px;" onclick="removePriority(${idx})">❌</button>
+                    </div>
+                `;
+                listEl.appendChild(li);
+            });
         }
+
+        function addServerToPriority() {
+            const select = document.getElementById('add-server-select');
+            if (!select || !select.value) return;
+            const val = select.value;
+            if (!priorityServers.includes(val)) {
+                priorityServers.push(val);
+                renderPriorityList();
+            }
+            select.value = '';
+        }
+
+        function removePriority(idx) {
+            priorityServers.splice(idx, 1);
+            renderPriorityList();
+        }
+
+        function movePriority(idx, dir) {
+            const targetIdx = idx + dir;
+            if (targetIdx < 0 || targetIdx >= priorityServers.length) return;
+            const temp = priorityServers[idx];
+            priorityServers[idx] = priorityServers[targetIdx];
+            priorityServers[targetIdx] = temp;
+            renderPriorityList();
+        }
+
+        function clearPriorityList() {
+            priorityServers = [];
+            renderPriorityList();
+        }
+
+        async function fetchRealtimeStatus() {
+            try {
+                const res = await fetch('?ajax=get_status');
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.success) {
+                    const badge = document.getElementById('service-status-badge');
+                    const badgeText = document.getElementById('service-status-text');
+                    const ifaceStatus = document.getElementById('iface-status-val');
+                    const ifaceIp = document.getElementById('iface-ip-val');
+                    const pidVal = document.getElementById('service-pid-val');
+
+                    if (badge && badgeText) {
+                        if (data.service_running) {
+                            badge.className = 'status-badge active';
+                            badgeText.innerText = 'Служба работает';
+                        } else {
+                            badge.className = 'status-badge inactive';
+                            badgeText.innerText = 'Служба остановлена';
+                        }
+                    }
+                    if (ifaceStatus) {
+                        ifaceStatus.innerText = data.interface_status;
+                        ifaceStatus.style.color = data.interface_status === 'Активен' ? 'var(--accent-green)' : 'var(--text-muted)';
+                    }
+                    if (ifaceIp) {
+                        ifaceIp.innerText = data.interface_ip;
+                    }
+                    if (pidVal) {
+                        pidVal.innerText = data.pid;
+                    }
+                }
+            } catch (e) {}
+        }
+        setInterval(fetchRealtimeStatus, 3000);
+        document.addEventListener('DOMContentLoaded', () => {
+            renderPriorityList();
+        });
     </script>
 </head>
 <body>
@@ -863,9 +1008,9 @@ if (file_exists($servers_file)) {
                     <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Маршрутизируемый VPN-клиент на Keenetic/Entware</p>
                 </div>
                 <div style="display: flex; align-items: center; gap: 16px;">
-                    <div class="status-badge <?php echo $service_running ? 'active' : 'inactive'; ?>">
+                    <div id="service-status-badge" class="status-badge <?php echo $service_running ? 'active' : 'inactive'; ?>">
                         <span class="status-dot"></span>
-                        <span><?php echo $service_running ? 'Служба работает' : 'Служба остановлена'; ?></span>
+                        <span id="service-status-text"><?php echo $service_running ? 'Служба работает' : 'Служба остановлена'; ?></span>
                     </div>
                     <form method="POST" style="margin: 0;">
                         <input type="hidden" name="action" value="logout">
@@ -892,13 +1037,13 @@ if (file_exists($servers_file)) {
                     </div>
                     <div class="info-row">
                         <span class="info-label">Статус интерфейса:</span>
-                        <span class="info-value" style="color: <?php echo $interface_status === 'Активен' ? 'var(--accent-green)' : 'var(--text-muted)'; ?>">
+                        <span id="iface-status-val" class="info-value" style="color: <?php echo $interface_status === 'Активен' ? 'var(--accent-green)' : 'var(--text-muted)'; ?>">
                             <?php echo $interface_status; ?>
                         </span>
                     </div>
                     <div class="info-row">
                         <span class="info-label">IP-адрес TUN:</span>
-                        <span class="info-value" style="font-family: monospace;"><?php echo $interface_ip ? htmlspecialchars($interface_ip) : '—'; ?></span>
+                        <span id="iface-ip-val" class="info-value" style="font-family: monospace;"><?php echo $interface_ip ? htmlspecialchars($interface_ip) : '—'; ?></span>
                     </div>
                     <div class="info-row">
                         <span class="info-label">Имя подписки:</span>
@@ -906,7 +1051,7 @@ if (file_exists($servers_file)) {
                     </div>
                     <div class="info-row">
                         <span class="info-label">PID процесса:</span>
-                        <span class="info-value" style="font-family: monospace;"><?php echo $pid ? htmlspecialchars($pid) : '—'; ?></span>
+                        <span id="service-pid-val" class="info-value" style="font-family: monospace;"><?php echo $pid ? htmlspecialchars($pid) : '—'; ?></span>
                     </div>
 
                     <div class="info-row" style="margin-top: 16px; border-top: 1px dashed var(--border-color); padding-top: 16px;">
@@ -942,27 +1087,45 @@ if (file_exists($servers_file)) {
                     </div>
                 </div>
 
-                <!-- Карточка выбора сервера -->
+                <!-- Карточка выбора серверов (Приоритет) -->
                 <div class="card">
-                    <h2>Выбор сервера</h2>
+                    <h2>Приоритет серверов (Failover)</h2>
                     <?php if (empty($servers_data)): ?>
                         <p style="color: var(--text-muted); font-size: 14px;">Импортируйте токен подписки, чтобы увидеть список доступных серверов.</p>
                     <?php else: ?>
-                        <form method="POST" style="margin-bottom: 20px;">
+                        <form method="POST" id="server-priority-form" style="margin-bottom: 20px;">
                             <input type="hidden" name="action" value="save_server">
                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+                            
                             <div class="form-group">
-                                <label for="server-select">Сервер для подключения</label>
-                                <select id="server-select" name="server">
-                                    <option value="" <?php echo empty($config['PREFERRED_SERVER']) ? 'selected' : ''; ?>>Автовыбор (Быстрейший)</option>
-                                    <?php foreach ($servers_data as $srv): ?>
-                                        <option value="<?php echo htmlspecialchars($srv['name']); ?>" <?php echo $config['PREFERRED_SERVER'] === $srv['name'] ? 'selected' : ''; ?>>
-                                            <?php echo htmlspecialchars($srv['name']); ?> (<?php echo htmlspecialchars($srv['host']); ?>:<?php echo $srv['port']; ?>)
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
+                                <label style="font-size: 13px;">Добавить сервер в список приоритетов:</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <select id="add-server-select" style="flex: 1;">
+                                        <option value="">-- Выберите сервер --</option>
+                                        <?php foreach ($servers_data as $srv): ?>
+                                            <option value="<?php echo htmlspecialchars($srv['name']); ?>">
+                                                <?php echo htmlspecialchars($srv['name']); ?> (<?php echo htmlspecialchars($srv['host']); ?>:<?php echo $srv['port']; ?>)
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <button type="button" class="btn btn-secondary" onclick="addServerToPriority()" style="white-space: nowrap; padding: 6px 12px; font-size: 13px;">➕ Добавить</button>
+                                </div>
                             </div>
-                            <button type="submit" class="btn btn-primary btn-full">Сохранить выбор</button>
+
+                            <div style="margin-bottom: 16px;">
+                                <label style="margin-bottom: 8px; font-size: 13px;">Порядок приоритета подключений:</label>
+                                <ul id="priority-server-list" style="list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px;">
+                                    <!-- Динамический список серверов -->
+                                </ul>
+                                <p id="auto-select-hint" style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
+                                    💡 Список пуст: используется <b>Автовыбор (Автоматический выбор наибыстрейшего сервера)</b>.
+                                </p>
+                            </div>
+
+                            <div style="display: flex; gap: 8px;">
+                                <button type="submit" class="btn btn-primary" style="flex: 1;">Сохранить приоритеты</button>
+                                <button type="button" class="btn btn-secondary" onclick="clearPriorityList()" style="font-size: 11px; padding: 6px 10px;">Сбросить в авто</button>
+                            </div>
                         </form>
                     <?php endif; ?>
 

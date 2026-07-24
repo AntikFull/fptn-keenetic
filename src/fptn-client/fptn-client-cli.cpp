@@ -329,7 +329,7 @@ int main(int argc, char* argv[]) {
       censorship_strategy = CensorshipStrategy::kSniRealityModeFirefox151;
     } else if (bypass_method == "sni-spoofing-firefox-150") {
       censorship_strategy = CensorshipStrategy::kSniRealityModeFirefox150;
-    } else if (bypass_method == "sni-spoofing-firefox149") {
+    } else if (bypass_method == "sni-spoofing-firefox-149") {
       censorship_strategy = CensorshipStrategy::kSniRealityModeFirefox149;
     }
     /* Yandex */
@@ -398,11 +398,29 @@ int main(int argc, char* argv[]) {
       }
       bool use_login_race = preferred_server.empty();
       if (!preferred_server.empty()) {
-        auto server_opt = config.GetServer(preferred_server);
-        if (server_opt.has_value()) {
-          selected_server = std::move(*server_opt);
-        } else {
-          SPDLOG_WARN("Server '{}' does not exist! Check your token!",
+        const std::vector<std::string> pref_servers =
+            fptn::common::utils::SplitCommaSeparated(preferred_server);
+        bool found = false;
+        for (const auto& s_name : pref_servers) {
+          auto server_opt = config.GetServer(s_name);
+          if (server_opt.has_value()) {
+            const auto check_ip = fptn::routing::ResolveDomain(server_opt->host);
+            if (!check_ip.IsEmpty()) {
+              selected_server = std::move(*server_opt);
+              found = true;
+              SPDLOG_INFO("Selected preferred server by priority: {}", selected_server.name);
+              break;
+            } else {
+              SPDLOG_WARN("DNS resolve failed for preferred server '{}' ({})",
+                  s_name, server_opt->host);
+            }
+          } else {
+            SPDLOG_WARN("Preferred server '{}' does not exist in token!", s_name);
+          }
+        }
+        if (!found) {
+          SPDLOG_WARN(
+              "None of preferred servers in '{}' are reachable. Falling back to auto-selection.",
               preferred_server);
           use_login_race = true;
         }

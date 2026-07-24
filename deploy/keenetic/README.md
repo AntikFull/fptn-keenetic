@@ -35,14 +35,14 @@ wget -O /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@mast
 ### Шаг 1. Установка пакетов Entware
 ```bash
 opkg update
-opkg install lighttpd php8-cgi php8-mod-openssl curl ca-bundle ca-certificates
+opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates cron
 ```
 
 ### Шаг 2. Развертывание бинарника
-Скачайте бинарник для вашей архитектуры процессора (посмотрите через `uname -m`) из [Релизов GitHub](https://github.com/AntikFull/fptn-keenetic/releases/tag/v1.0.2-keenetic) и положите его по пути `/opt/bin/fptn-client-cli`:
+Скачайте бинарник для вашей архитектуры процессора (посмотрите через `uname -m`) из [Релизов GitHub](https://github.com/AntikFull/fptn-keenetic/releases) и положите его по пути `/opt/bin/fptn-client-cli`:
 ```bash
 # Пример для aarch64
-curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.2-keenetic/fptn-client-cli-aarch64
+curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.5-keenetic/fptn-client-cli-aarch64
 chmod +x /opt/bin/fptn-client-cli
 ```
 
@@ -63,7 +63,8 @@ system configuration save
 ### Шаг 4. Настройка веб-сервера Lighttpd
 Создайте файл `/opt/etc/lighttpd/conf.d/85-fptn.conf`:
 ```lighttpd
-# Перенаправляем путь /fptn/ на php-cgi
+# Настройки веб-интерфейса FPTN
+server.modules += ( "mod_cgi" )
 $HTTP["url"] =~ "^/fptn/" {
     cgi.assign = ( ".php" => "/opt/bin/php-cgi" )
     static-file.exclude-extensions += ( ".php" )
@@ -112,3 +113,15 @@ ndmc -c 'ip dns-route object-group domain-list8 OpkgTun1'
 # Шаг 3. Сохранить конфигурацию
 ndmc -c 'system configuration save'
 ```
+
+---
+
+## 4. Сброс пароля веб-панели
+
+Если вы забыли пароль доступа к веб-панели `/fptn/`:
+1. Подключитесь к роутеру по SSH.
+2. Откройте `/opt/etc/fptn-client.conf` в текстовом редакторе (`nano` / `vi`) или удалите строку `WEB_PASSWORD`:
+   ```bash
+   sed -i '/WEB_PASSWORD/d' /opt/etc/fptn-client.conf
+   ```
+3. Обновите страницу панели в браузере — вам будет предложено задать новый пароль.
