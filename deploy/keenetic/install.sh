@@ -127,7 +127,7 @@ if [ -n "$PREV_LTUN" ]; then
     DEFAULT_KTUN=$(echo "$PREV_LTUN" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
 elif which ndmc >/dev/null 2>&1; then
     TUN_IDX=1
-    while true; do
+    while [ "$TUN_IDX" -le 10 ]; do
         C_KTUN="OpkgTun${TUN_IDX}"
         C_LTUN="opkgtun${TUN_IDX}"
         IF_INFO=$( (ndmc -c "show interface $C_KTUN" 2>/dev/null) || echo "Command error" )
@@ -143,7 +143,6 @@ elif which ndmc >/dev/null 2>&1; then
             break
         fi
         TUN_IDX=$((TUN_IDX + 1))
-        if [ "$TUN_IDX" -gt 10 ]; then break; fi
     done
 fi
 
