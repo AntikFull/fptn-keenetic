@@ -564,8 +564,11 @@ $service_title = '—';
 if (!empty($config['TOKEN'])) {
     if (file_exists($servers_file)) {
         $json_data = json_decode(file_get_contents($servers_file), true);
-        if (isset($json_data['service_name'])) {
-            $service_title = htmlspecialchars($json_data['service_name']);
+        if ($json_data) {
+            $servers_data = $json_data['servers'] ?? [];
+            if (isset($json_data['service_name'])) {
+                $service_title = htmlspecialchars($json_data['service_name']);
+            }
         }
     }
 } else {
