@@ -148,6 +148,51 @@ function generate_user_token($host, $port, $username, $password, $fingerprint = 
     return 'fptnb:' . base64_encode(json_encode($token_data));
 }
 
+// Вспомогательная функция для HTTP запросов с каскадным фоллбэком (cURL -> CLI curl -> stream_context)
+function http_get_contents($url, $timeout = 10) {
+    if (function_exists('curl_init')) {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Keenetic FPTN Client)');
+        $data = curl_exec($ch);
+        $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        if ($data !== false && $code >= 200 && $code < 400) {
+            return ['code' => (int)$code, 'data' => $data];
+        }
+    }
+    
+    $cmd = "curl -sL -k --connect-timeout " . (int)$timeout . " --max-time " . (int)$timeout . " " . escapeshellarg($url) . " 2>/dev/null";
+    $data = shell_exec($cmd);
+    if ($data !== null && $data !== false && strlen($data) > 0) {
+        return ['code' => 200, 'data' => $data];
+    }
+    
+    $ctx = stream_context_create([
+        'http' => [
+            'timeout' => $timeout,
+            'header' => "User-Agent: Mozilla/5.0 (Keenetic FPTN Client)\r\n",
+            'follow_location' => 1
+        ],
+        'ssl' => [
+            'verify_peer' => false,
+            'verify_peer_name' => false
+        ]
+    ]);
+    $data = @file_get_contents($url, false, $ctx);
+    if ($data !== false) {
+        return ['code' => 200, 'data' => $data];
+    }
+    
+    return ['code' => 0, 'data' => ''];
+}
+
 // Функция чтения конфигурации
 function read_config() {
     global $conf_file, $config;
