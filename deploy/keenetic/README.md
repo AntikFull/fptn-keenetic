@@ -1,4 +1,10 @@
-# Клиент FPTN для роутеров Keenetic (Entware)
+# 🌐 Клиент FPTN для роутеров Keenetic (Entware) / FPTN Client for Keenetic
+
+[🇷🇺 Русский](#-клиент-fptn-для-роутеров-keenetic-entware) | [🇬🇧 English](#-fptn-client-for-keenetic-routers-entware)
+
+---
+
+# 🇷🇺 Клиент FPTN для роутеров Keenetic (Entware)
 
 Интеграция маршрутизируемого VPN-клиента FPTN на роутеры Keenetic с установленной средой Entware. Включает в себя веб-панель управления и автоматическое заведение туннеля в систему KeeneticOS.
 
@@ -9,7 +15,7 @@
 Запустите интерактивный установщик на роутере по SSH.
 
 ### 🚀 Стандартная установка:
-Скачайте скрипт установщика во временный файл и запустите его (это необходимо для корректной работы ввода в терминале):
+Скачайте скрипт установщика во временный файл и запустите его:
 ```bash
 curl -fsSL -o /tmp/install.sh https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/install.sh && sh /tmp/install.sh
 ```
@@ -87,32 +93,17 @@ $HTTP["url"] =~ "^/fptn/" {
 
 ## 3. Настройка маршрутизации в KeeneticOS
 
-Поскольку служба FPTN запускается с флагом `--disable-routing`, она не вмешивается в системные маршруты Linux напрямую, позволяя операционной системе роутера KeeneticOS управлять маршрутизацией через стандартные политики.
+Служба FPTN запускается с флагом `--disable-routing`, предоставляя KeeneticOS полное управление политиками маршрутизации.
 
 ### Вариант 1. Через Web-интерфейс Keenetic (Политики маршрутизации)
-1. Перейдите в раздел **«Сетевые правила» -> «Приоритеты подключений»** (или «Политики маршрутизации» в зависимости от версии KeeneticOS).
-2. Вы увидите новое подключение **Fptn** в списке «Приоритеты подключений».
-3. Перетащите подключение **Fptn** в нужную политику (например, в «Основную» или создайте отдельную политику «VPN»).
-4. Все устройства, добавленные в эту политику, будут направлять свой трафик через туннель FPTN.
+1. Перейдите в раздел **«Сетевые правила» -> «Приоритеты подключений»**.
+2. Вы увидите новое подключение **Fptn**.
+3. Перетащите подключение **Fptn** в нужную политику (например, в «Основную» или «VPN»).
+4. Все устройства в этой политике будут направлять свой трафик через туннель FPTN.
 
 ### Вариант 2. Выборочная маршрутизация доменов (DNS-маршруты)
-Вы можете направлять только определенные домены (например, заблокированные ресурсы) через FPTN.
-
-**Через Web-панель Keenetic:**
-1. Перейдите в раздел **«Сетевые правила» -> «Маршрутизация»** (или «Интернет-фильтр» -> «Настройка DNS-маршрутов» в KeeneticOS 4.x/5.x).
+1. Перейдите в раздел **«Сетевые правила» -> «Маршрутизация»** (или «DNS-маршруты»).
 2. Создайте новый DNS-маршрут для нужного доменного списка и выберите интерфейс **Fptn** в качестве шлюза.
-
-**Через CLI роутера по SSH:**
-```bash
-# Шаг 1. Посмотреть существующие доменные группы (object-groups)
-# ndmc -c 'show running-config'
-
-# Шаг 2. Направить группу доменов (например, domain-list8 / 4pda) через интерфейс OpkgTun1
-ndmc -c 'ip dns-route object-group domain-list8 OpkgTun1'
-
-# Шаг 3. Сохранить конфигурацию
-ndmc -c 'system configuration save'
-```
 
 ---
 
@@ -120,8 +111,122 @@ ndmc -c 'system configuration save'
 
 Если вы забыли пароль доступа к веб-панели `/fptn/`:
 1. Подключитесь к роутеру по SSH.
-2. Откройте `/opt/etc/fptn-client.conf` в текстовом редакторе (`nano` / `vi`) или удалите строку `WEB_PASSWORD`:
+2. Откройте `/opt/etc/fptn-client.conf` и удалите строку `WEB_PASSWORD`:
    ```bash
    sed -i '/WEB_PASSWORD/d' /opt/etc/fptn-client.conf
    ```
-3. Обновите страницу панели в браузере — вам будет предложено задать новый пароль.
+3. Обновите страницу панели в браузере.
+
+---
+---
+
+# 🇬🇧 FPTN Client for Keenetic Routers (Entware)
+
+Integration of the routed FPTN VPN client into Keenetic routers running the Entware environment. Features an interactive web management panel and automatic tunnel registration in KeeneticOS.
+
+---
+
+## 1. Quick Installation (Recommended)
+
+Run the interactive installer on your router via SSH.
+
+### 🚀 Standard Installation:
+Download the installer script to a temporary file and run it:
+```bash
+curl -fsSL -o /tmp/install.sh https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/install.sh && sh /tmp/install.sh
+```
+
+### ⚡ Mirror for Restricted Networks / CDN:
+If your connection blocks GitHub raw content, use the fast CDN mirror:
+```bash
+curl -fsSL -o /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
+```
+*(Or via `wget` if curl is missing:)*
+```bash
+wget -O /tmp/install.sh https://cdn.jsdelivr.net/gh/AntikFull/fptn-keenetic@master/deploy/keenetic/install.sh && sh /tmp/install.sh
+```
+
+The installer automatically installs required packages, downloads the binary matching your CPU architecture (`aarch64`, `armv7`, `mipsel`), configures the TUN interface in KeeneticOS, and sets up the web panel.
+
+---
+
+## 2. Manual Installation
+
+If you prefer a manual setup, follow these steps:
+
+### Step 1. Install Entware Packages
+```bash
+opkg update
+opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates cron
+```
+
+### Step 2. Download Binary
+Fetch the binary corresponding to your router's architecture (`uname -m`) from [GitHub Releases](https://github.com/AntikFull/fptn-keenetic/releases) and place it at `/opt/bin/fptn-client-cli`:
+```bash
+# Example for aarch64
+curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.5-keenetic/fptn-client-cli-aarch64
+chmod +x /opt/bin/fptn-client-cli
+```
+
+### Step 3. Register TUN Interface in KeeneticOS
+Run the following commands in Keenetic CLI (`ndmc`):
+```bash
+interface OpkgTun1 type OpkgTun
+interface OpkgTun1 description Fptn
+interface OpkgTun1 security-level public
+interface OpkgTun1 ip address 10.0.0.1 255.255.255.255
+interface OpkgTun1 ip global 50000
+interface OpkgTun1 ip tcp adjust-mss pmtu
+interface OpkgTun1 up
+system configuration save
+```
+
+### Step 4. Configure Lighttpd Web Server
+Create `/opt/etc/lighttpd/conf.d/85-fptn.conf`:
+```lighttpd
+server.modules += ( "mod_cgi" )
+$HTTP["url"] =~ "^/fptn/" {
+    cgi.assign = ( ".php" => "/opt/bin/php-cgi" )
+    static-file.exclude-extensions += ( ".php" )
+}
+```
+Restart Lighttpd: `/opt/etc/init.d/S80lighttpd restart`.
+
+### Step 5. Web Panel and Service Configuration
+1. Create directory `/opt/share/www/fptn/` and copy [index.php](index.php) into it.
+2. Create `/opt/etc/fptn-client.conf`:
+   ```ini
+   ENABLED="no"
+   TOKEN="YOUR_SUBSCRIPTION_TOKEN"
+   PREFERRED_SERVER=""
+   TUN_INTERFACE="opkgtun1"
+   ```
+3. Copy init script [S53fptn-client](S53fptn-client) to `/opt/etc/init.d/S53fptn-client` and make it executable: `chmod +x /opt/etc/init.d/S53fptn-client`.
+
+---
+
+## 3. Routing Configuration in KeeneticOS
+
+The FPTN client runs with `--disable-routing`, delegating full routing policy control to KeeneticOS.
+
+### Option 1. Keenetic Web Interface (Connection Priorities)
+1. Navigate to **Network Rules -> Connection Priorities** in KeeneticOS Web UI.
+2. Locate the new **Fptn** connection interface.
+3. Drag **Fptn** into your desired policy (e.g. Main policy or a custom VPN policy).
+4. All client devices assigned to this policy will route traffic through FPTN.
+
+### Option 2. Selective Domain Routing (DNS Routes)
+1. Go to **Network Rules -> Routing** (or **DNS Routes**).
+2. Create a new DNS route for target domain lists and select **Fptn** as the gateway.
+
+---
+
+## 4. Resetting Web Panel Password
+
+If you forget your `/fptn/` web panel password:
+1. Connect to the router via SSH.
+2. Remove the `WEB_PASSWORD` line in `/opt/etc/fptn-client.conf`:
+   ```bash
+   sed -i '/WEB_PASSWORD/d' /opt/etc/fptn-client.conf
+   ```
+3. Refresh the web panel page in your browser to set a new password.
