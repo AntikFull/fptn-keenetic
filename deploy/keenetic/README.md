@@ -54,7 +54,7 @@ opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep
 Скачайте бинарник для вашей архитектуры процессора (посмотрите через `uname -m`) из [Релизов GitHub](https://github.com/AntikFull/fptn-keenetic/releases) и положите его по пути `/opt/bin/fptn-client-cli`:
 ```bash
 # Пример для aarch64
-curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.5-keenetic/fptn-client-cli-aarch64
+curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.6-keenetic/fptn-client-cli-aarch64
 chmod +x /opt/bin/fptn-client-cli
 ```
 
@@ -170,7 +170,7 @@ opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep
 Fetch the binary corresponding to your router's architecture (`uname -m`) from [GitHub Releases](https://github.com/AntikFull/fptn-keenetic/releases) and place it at `/opt/bin/fptn-client-cli`:
 ```bash
 # Example for aarch64
-curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.5-keenetic/fptn-client-cli-aarch64
+curl -L -o /opt/bin/fptn-client-cli https://github.com/AntikFull/fptn-keenetic/releases/download/v1.0.6-keenetic/fptn-client-cli-aarch64
 chmod +x /opt/bin/fptn-client-cli
 ```
 

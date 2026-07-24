@@ -34,9 +34,11 @@ pkill -9 -f "fptn-watchdog" >/dev/null 2>&1 || true
 # 2. Удаление файлов / Remove files
 echo "[2/5] Удаление бинарников и файлов веб-панели / Removing binary & web files..."
 rm -f /opt/bin/fptn-client-cli
+rm -f /opt/bin/fptn-client-wrapper.sh
+rm -f /opt/bin/fptn-watchdog.sh
+rm -f /opt/etc/fptn-watchdog.sh
 rm -f /opt/etc/fptn-client.conf
 rm -f /opt/etc/init.d/S53fptn-client
-rm -f /opt/etc/fptn-watchdog.sh
 rm -f /opt/etc/lighttpd/conf.d/85-fptn.conf
 rm -rf /opt/share/www/fptn
 

@@ -99,6 +99,15 @@ fptnb:H+QXAKyKdwjvRjoxlH6U8usVY3OsRkgyWyJ7pszm7ARZel8fYzAKFscilT/3Pwo2qRwqxuAYkm
 
 ---
 
+## 📝 Журнал выполненных работ (Релиз v1.0.6-keenetic)
+### 🔄 Восстановление стабильности KeeneticOS
+- **Удаление fptn-client-wrapper.sh:** Отказались от запуска CLI в фоне через шелл-обертку, устранив зависание фоновых процессов и 100% загрузку CPU.
+- **Восстановление прямого управления службой:** В `S53fptn-client` возвращен прямой запуск `/opt/bin/fptn-client-cli` под управлением Entware `rc.func`.
+- **Восстановление ip global 50000:** Приоритет интерфейса NDM снижен с 700 до 50000, исключив закольцовывание системных сокетов.
+- **Очистка iptables:** Удалены жесткие вызовы `MASQUERADE` и `TCPMSS`, передав управление NAT роутера демону KeeneticOS `ndm`.
+- **Синтаксис и форматирование:** Все shell-скрипты проверены утилитой `sh -n` и приведены к формату UNIX LF.
+
+
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 

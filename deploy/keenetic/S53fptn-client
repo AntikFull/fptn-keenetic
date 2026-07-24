@@ -1,7 +1,7 @@
 #!/bin/sh
 
 ENABLED=no
-PROCS=/opt/bin/fptn-client-wrapper.sh
+PROCS=/opt/bin/fptn-client-cli
 DESC="fptn-client"
 CONF=/opt/etc/fptn-client.conf
 
@@ -20,13 +20,13 @@ if [ -z "$TOKEN" ]; then
 fi
 
 # Строим аргументы
-ARGS="--access-token $TOKEN --tun-interface-name ${TUN_INTERFACE:-opkgtun11} --disable-routing"
+ARGS="--access-token $TOKEN --tun-interface-name ${TUN_INTERFACE:-opkgtun1} --disable-routing"
 
 if [ -n "$PREFERRED_SERVER" ]; then
     ARGS="$ARGS --preferred-server $PREFERRED_SERVER"
 fi
 
-PRECMD=""
+PRECMD="ip link delete ${TUN_INTERFACE:-opkgtun1} >/dev/null 2>&1 || true"
 PREARGS=""
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

@@ -73,7 +73,7 @@ fi
 # Динамическое определение версии релиза из version.txt
 REMOTE_VER=$(curl -sL --connect-timeout 5 "${GITHUB_RAW_BASE}/deploy/keenetic/version.txt" 2>/dev/null | tr -d '\r\n')
 if [ -z "$REMOTE_VER" ]; then
-    REMOTE_VER="v1.0.5-keenetic"
+    REMOTE_VER="v1.0.6-keenetic"
 fi
 
 # Универсальная функция скачивания с каскадом прокси-зеркал / Download helper with mirror fallback
@@ -413,20 +413,14 @@ if which ndmc >/dev/null 2>&1; then
     ndmc -c "interface ${KTUN} description FPTN-Client" >/dev/null 2>&1 || true
     ndmc -c "interface ${KTUN} security-level public" >/dev/null 2>&1 || true
     ndmc -c "interface ${KTUN} ip address 172.20.0.2 255.255.0.0" >/dev/null 2>&1 || true
-    ndmc -c "interface ${KTUN} ip global 700" >/dev/null 2>&1 || true
+    ndmc -c "interface ${KTUN} ip global 50000" >/dev/null 2>&1 || true
     ndmc -c "interface ${KTUN} up" >/dev/null 2>&1 || true
     ndmc -c "system configuration save" >/dev/null 2>&1 || true
 fi
 
-# 9. Установка init-скрипта автозапуска службы и обертки / Install Init Script & Wrapper
+# 9. Установка init-скрипта автозапуска службы / Install Init Script
 echo ""
 echo "[7/8] Настройка службы автозапуска / Setting up auto-start service..."
-if [ -f "$SCRIPT_DIR/fptn-client-wrapper.sh" ]; then
-    cp "$SCRIPT_DIR/fptn-client-wrapper.sh" "/opt/bin/fptn-client-wrapper.sh"
-else
-    download_file "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-client-wrapper.sh" "/opt/bin/fptn-client-wrapper.sh" 30 || true
-fi
-chmod 755 /opt/bin/fptn-client-wrapper.sh
 
 if [ -f "$SCRIPT_DIR/S53fptn-client" ]; then
     cp "$SCRIPT_DIR/S53fptn-client" "/opt/etc/init.d/S53fptn-client"
