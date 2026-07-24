@@ -193,6 +193,20 @@ function http_get_contents($url, $timeout = 10) {
     return ['code' => 0, 'data' => ''];
 }
 
+// Прямое скачивание бинарников на диск во избежание исчерпания памяти php-cgi (memory_limit)
+function download_file_to_disk($url, $dest_path, $timeout = 180) {
+    @unlink($dest_path);
+    $cmd = "curl -sL -k --connect-timeout 15 --max-time " . (int)$timeout . " -o " . escapeshellarg($dest_path) . " " . escapeshellarg($url) . " 2>/dev/null";
+    exec($cmd);
+    if (file_exists($dest_path) && filesize($dest_path) > 1000000) {
+        return true;
+    }
+    $mirror_url = "https://ghproxy.net/" . $url;
+    $cmd_mirror = "curl -sL -k --connect-timeout 15 --max-time " . (int)$timeout . " -o " . escapeshellarg($dest_path) . " " . escapeshellarg($mirror_url) . " 2>/dev/null";
+    exec($cmd_mirror);
+    return file_exists($dest_path) && filesize($dest_path) > 1000000;
+}
+
 // Функция чтения конфигурации
 function read_config() {
     global $conf_file, $config;
@@ -331,27 +345,20 @@ if (isset($_GET['ajax']) && $authenticated) {
             exit;
         }
         
-        if ($use_mirrors) {
-            $bin_url = "https://ghproxy.net/https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
-            $php_url = "https://ghproxy.net/https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php";
-        } else {
-            $bin_url = "https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
-            $php_url = "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php";
-        }
+        $bin_url = "https://github.com/AntikFull/fptn-keenetic/releases/download/{$remote_version}/fptn-client-cli-{$arch_suffix}";
+        $php_url = "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/index.php";
         
         $tmp_bin = "/tmp/fptn-client-cli.tmp";
         $tmp_php = "/tmp/index.php.tmp";
         
-        // Скачивание бинарника
-        $res_bin = http_get_contents($bin_url, 60);
-        if ($res_bin['code'] !== 200 || empty($res_bin['data'])) {
-            echo json_encode(['success' => false, 'message' => "Не удалось скачать бинарный файл с GitHub Releases: HTTP {$res_bin['code']}"]);
+        // 1. Прямое скачивание бинарника на диск (без потребления OOM памяти PHP)
+        if (!download_file_to_disk($bin_url, $tmp_bin, 180)) {
+            echo json_encode(['success' => false, 'message' => "Не удалось скачать бинарный файл версии {$remote_version}."]);
             exit;
         }
-        file_put_contents($tmp_bin, $res_bin['data']);
         chmod($tmp_bin, 0755);
         
-        // Скачивание PHP панели
+        // 2. Скачивание PHP панели
         $res_php = http_get_contents($php_url, 20);
         if ($res_php['code'] !== 200 || empty($res_php['data'])) {
             @unlink($tmp_bin);
