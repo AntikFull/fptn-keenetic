@@ -295,6 +295,7 @@ if [ "$DOWNLOAD_SUCCESS" != "yes" ] && [ ! -s "/opt/bin/fptn-client-cli" ]; then
     exit 1
 fi
 chmod +x /opt/bin/fptn-client-cli
+echo "$REMOTE_VER" > /opt/etc/fptn-version
 
 # 5. Создание и настройка TUN-интерфейса в KeeneticOS / Register TUN Interface in KeeneticOS
 echo ""

@@ -193,6 +193,17 @@ function http_get_contents($url, $timeout = 10) {
     return ['code' => 0, 'data' => ''];
 }
 
+$version_file = "/opt/etc/fptn-version";
+
+function get_installed_version() {
+    global $version_file;
+    if (file_exists($version_file)) {
+        $v = trim(@file_get_contents($version_file));
+        if (!empty($v)) return $v;
+    }
+    return CURRENT_VERSION;
+}
+
 // Прямое скачивание бинарников на диск во избежание исчерпания памяти php-cgi (memory_limit)
 function download_file_to_disk($url, $dest_path, $timeout = 180) {
     @unlink($dest_path);
@@ -281,14 +292,15 @@ if (isset($_GET['ajax']) && $authenticated) {
         
         if ($res['code'] === 200 && !empty($res['data'])) {
             $remote_version = trim($res['data']);
+            $current_ver = get_installed_version();
             // Сравниваем версии без префикса 'v' и суффикса '-keenetic'
             $v_remote = preg_replace('/[^0-9\.]/', '', $remote_version);
-            $v_current = preg_replace('/[^0-9\.]/', '', CURRENT_VERSION);
+            $v_current = preg_replace('/[^0-9\.]/', '', $current_ver);
             $has_update = (version_compare($v_remote, $v_current) > 0);
             
             echo json_encode([
                 'success' => true,
-                'current_version' => CURRENT_VERSION,
+                'current_version' => $current_ver,
                 'remote_version' => $remote_version,
                 'has_update' => $has_update
             ]);
@@ -394,7 +406,10 @@ if (isset($_GET['ajax']) && $authenticated) {
             exec("{$init_script} start 2>&1");
         }
         
-        // 4. Заменяем саму себя в последнюю очередь
+        // 4. Сохраняем информацию об установленной версии
+        @file_put_contents($version_file, $remote_version);
+        
+        // 5. Заменяем саму себя в последнюю очередь
         rename($tmp_php, "/opt/share/www/fptn/index.php");
         
         echo json_encode(['success' => true, 'message' => 'Обновление успешно установлено!']);
@@ -1159,7 +1174,7 @@ if (!empty($config['TOKEN'])) {
             <!-- Основной интерфейс управления (доступен только после авторизации) -->
             <header>
                 <div>
-                    <h1>Клиент FPTN <span style="font-size: 12px; font-weight: normal; color: var(--text-muted); background: var(--border-color); padding: 2px 8px; border-radius: 12px; margin-left: 8px; vertical-align: middle;"><?php echo CURRENT_VERSION; ?></span></h1>
+                    <h1>Клиент FPTN <span style="font-size: 12px; font-weight: normal; color: var(--text-muted); background: var(--border-color); padding: 2px 8px; border-radius: 12px; margin-left: 8px; vertical-align: middle;"><?php echo htmlspecialchars(get_installed_version()); ?></span></h1>
                     <p style="font-size: 14px; color: var(--text-muted); margin-top: 4px;">Маршрутизируемый VPN-клиент на Keenetic/Entware</p>
                 </div>
                 <div style="display: flex; align-items: center; gap: 16px;">
@@ -1212,7 +1227,7 @@ if (!empty($config['TOKEN'])) {
                     <div class="info-row" style="margin-top: 16px; border-top: 1px dashed var(--border-color); padding-top: 16px;">
                         <span class="info-label">Версия панели:</span>
                         <span class="info-value">
-                            <?php echo CURRENT_VERSION; ?>
+                            <?php echo htmlspecialchars(get_installed_version()); ?>
                             <button type="button" id="check-update-btn" class="btn btn-secondary" style="padding: 2px 8px; font-size: 11px; margin-left: 8px; border-radius: 6px; display: inline-flex;" onclick="checkUpdates()">🔄 Проверить</button>
                         </span>
                     </div>
