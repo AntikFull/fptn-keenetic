@@ -187,13 +187,19 @@ std::string VpnManager::GetInterfaceName() const {
 
 void VpnManager::HandleOnPacketFromVirtualNetworkInterface(
     fptn::common::network::IPPacketPtr packet) {
-  if (!running_) {
+  if (!running_ || !packet) {
     return;
   }
 
   const std::unique_lock<std::mutex> lock(mutex_);  // mutex
 
   if (running_ && config_.http_client) {
+    if (packet->IsIPv4()) {
+      const auto src_ip = packet->GetSrcIPv4Address();
+      if (!src_ip.IsEmpty() && src_ip.ToString() != FPTN_CLIENT_DEFAULT_ADDRESS_IP4) {
+        config_.http_client->UpdateTunInterfaceAddressIPv4(src_ip);
+      }
+    }
     config_.http_client->Send(std::move(packet));
   }
 }

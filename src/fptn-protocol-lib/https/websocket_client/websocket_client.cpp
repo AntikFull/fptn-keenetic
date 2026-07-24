@@ -525,8 +525,19 @@ boost::asio::awaitable<bool> WebsocketClient::ReceiveIPAssignment() {
     }
 
     ip_assigned_ = true;
-    assigned_ipv4_ = common::network::IPv4Address(ipv4_str);
-    assigned_ipv6_ = common::network::IPv6Address(ipv6_str);
+    {
+      const std::lock_guard<std::mutex> lock(mutex_);
+      assigned_ipv4_ = common::network::IPv4Address(ipv4_str);
+      assigned_ipv6_ = common::network::IPv6Address(ipv6_str);
+      if (config_.tun_interface_address_ipv4.IsEmpty() ||
+          config_.tun_interface_address_ipv4.ToString() == FPTN_CLIENT_DEFAULT_ADDRESS_IP4) {
+        config_.tun_interface_address_ipv4 = assigned_ipv4_;
+      }
+      if (config_.tun_interface_address_ipv6.IsEmpty() ||
+          config_.tun_interface_address_ipv6.ToString() == FPTN_CLIENT_DEFAULT_ADDRESS_IP6) {
+        config_.tun_interface_address_ipv6 = assigned_ipv6_;
+      }
+    }
 
     SPDLOG_INFO("Received IP assignment from server: IPv4={}, IPv6={}",
         ipv4_str, ipv6_str);
@@ -571,13 +582,24 @@ boost::asio::awaitable<void> WebsocketClient::RunReader() {
           auto packet =
               fptn::common::network::IPPacket::Parse(std::move(raw_ip_opt));
           if (running_ && packet && config_.new_ip_pkt_callback) {
+            common::network::IPv4Address target_ipv4;
+            common::network::IPv6Address target_ipv6;
+            {
+              const std::lock_guard<std::mutex> lock(mutex_);
+              target_ipv4 = config_.tun_interface_address_ipv4;
+              target_ipv6 = config_.tun_interface_address_ipv6;
+            }
             // change IP addresses
             if (packet->IsIPv4()) {
-              packet->SetDstIPv4Address(config_.tun_interface_address_ipv4);
-              packet->ComputeCalculateFields();
+              if (!target_ipv4.IsEmpty() && target_ipv4.ToString() != FPTN_CLIENT_DEFAULT_ADDRESS_IP4) {
+                packet->SetDstIPv4Address(target_ipv4);
+                packet->ComputeCalculateFields();
+              }
             } else if (packet->IsIPv6()) {
-              packet->SetDstIPv6Address(config_.tun_interface_address_ipv6);
-              packet->ComputeCalculateFields();
+              if (!target_ipv6.IsEmpty() && target_ipv6.ToString() != FPTN_CLIENT_DEFAULT_ADDRESS_IP6) {
+                packet->SetDstIPv6Address(target_ipv6);
+                packet->ComputeCalculateFields();
+              }
             } else {
               continue;
             }
