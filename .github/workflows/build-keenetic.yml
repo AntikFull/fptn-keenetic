@@ -3,8 +3,11 @@ name: Build FPTN Client for Keenetic
 on:
   push:
     branches: [ master, main ]
+    tags: [ '*' ]
   pull_request:
     branches: [ master, main ]
+  release:
+    types: [ published ]
   workflow_dispatch:
 
 jobs:
@@ -104,8 +107,18 @@ jobs:
             exit 1
           fi
 
-      - name: Upload Artifact
+      - name: Prepare Named Binary Asset
+        run: |
+          cp build/src/fptn-client/fptn-client-cli fptn-client-cli-${{ matrix.arch-name }}
+
+      - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: fptn-client-cli-${{ matrix.arch-name }}
-          path: build/src/fptn-client/fptn-client-cli
+          path: fptn-client-cli-${{ matrix.arch-name }}
+
+      - name: Upload Binary Asset to GitHub Release
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: fptn-client-cli-${{ matrix.arch-name }}
