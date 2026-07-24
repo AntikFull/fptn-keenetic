@@ -78,10 +78,24 @@ fptnb:H+QXAKyKdwjvRjoxlH6U8usVY3OsRkgyWyJ7pszm7ARZel8fYzAKFscilT/3Pwo2qRwqxuAYkm
 - **Watchdog TUN Check:** Заменена сбойная команда `ping -I opkgtun1` на универсальную системную проверку `ip addr show "$TUN"`.
 - **UTF-8 Локаль:** В `install.sh` добавлен экспорт `LANG` и `LC_ALL` `ru_RU.UTF-8` для 100% предотвращения крякозябр на любом SSH-клиенте.
 
-### 5. 📦 Сборка и Деплой
-- Версионные теги обновлены до `v1.0.5-keenetic` во всех 4 обязательных файлах (`version.txt`, `index.php`, `install.sh`, `README.md`).
+### 5. 🛠️ Улучшения надежности, Деинсталляция и Защита от сбоев
+- **Встроенный бинарник и проверка целостности (`check_binary_valid`):**
+  В `deploy/keenetic/bin/` встроен готовый C++ бинарник `fptn-client-cli-aarch64`. В `install.sh` внедрена валидация `check_binary_valid` (размер >1 МБ, отсутствие 404 HTML). Каскад скачивания: Репозиторий `master` ➔ `releases/download/${REMOTE_VER}` ➔ Динамический `releases/latest/download` ➔ CDN-зеркала.
+- **Чистая деинсталляция (`uninstall.sh` и флаг `--uninstall`):**
+  Разработан скрипт `deploy/keenetic/uninstall.sh` и поддержан флаг `--uninstall` (`-u`) в `install.sh`. Бесследно удаляет файлы клиенты, веб-панели, записи cron и интерфейсы `OpkgTun` из KeeneticOS.
+- **Защита от нагрузки CPU и сбоев `set -e`:**
+  Все вызовы `ndmc` защищены от аварийного завершения `set -e` через `|| true`. Поиск свободных интерфейсов `OpkgTun` ограничен жестким максимумом в 10 итераций, устранившим нагрузку на системный демон KeeneticOS (`ndm`).
+- **Неинтерактивная установка (`-y` / `--auto`):**
+  Добавлен флаг `-y` в `install.sh` и поддержка ввода по умолчанию, исключившие зависание в неинтерактивных терминалах (WinSCP, PuTTY exec).
+- **Фикс JS Scope в веб-панели (`index.php`):**
+  Добавлена пропущенная скобка `}` в `installUpdate()`, восстановившая работу интерактивного добавления и сортировки приоритетных серверов (`addServerToPriority`).
+- **Автоустановка зависимостей Entware:**
+  В список пакетов `install.sh` добавлены `libxml2` и `lighttpd-mod-cgi`, устранившие ошибки `libxml2.so.16: not found` и расхождение версий плагинов Lighttpd. Добавлен `opkg update || true` для устойчивости к заблокированным сторонним фидам.
+
+### 6. 📦 Сборка и Деплой
+- Версионные теги обновлены до `v1.0.5-keenetic` во всех обязательных файлах (`version.txt`, `index.php`, `install.sh`, `README.md`).
 - Выполнена компиляция релиза под MSVC (`fptn-client-cli.exe`, 17.7 МБ) со 100% кэшированием Conan.
-- Закоммичено и задеплоено в репозиторий GitHub [AntikFull/fptn-keenetic](https://github.com/AntikFull/fptn-keenetic) с релизным тегом `v1.0.5-keenetic`.
+- Все изменения закоммичены и задеплоены в репозиторий GitHub [AntikFull/fptn-keenetic](https://github.com/AntikFull/fptn-keenetic).
 
 ---
 
