@@ -443,6 +443,7 @@ else
     fi
 fi
 chmod 755 /opt/bin/fptn-watchdog.sh
+sed -i "s/TUN_INTERFACE:-opkgtun[0-9]*/TUN_INTERFACE:-${USER_LTUN}/g" /opt/bin/fptn-watchdog.sh
 
 CRONTAB="/opt/etc/crontab"
 CRON_JOB="*/1 * * * * root /opt/bin/fptn-watchdog.sh"
