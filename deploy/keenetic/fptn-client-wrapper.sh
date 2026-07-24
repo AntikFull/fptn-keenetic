@@ -2,7 +2,8 @@
 if [ -f /opt/etc/fptn-client.conf ]; then
     . /opt/etc/fptn-client.conf
 fi
-if [ "$ENABLED" != "yes" ] || [ -z "$TOKEN" ]; then
+
+if [ "$ENABLED" = "no" ] || [ "$ENABLED" = "'no'" ] || [ -z "$TOKEN" ]; then
     exit 0
 fi
 
@@ -16,17 +17,23 @@ fi
 /opt/bin/fptn-client-cli $ARGS &
 CLI_PID=$!
 
-(
-    sleep 2
-    ip addr add 10.0.0.2/24 dev "$TUN_NAME" 2>/dev/null || true
-    ip link set "$TUN_NAME" up 2>/dev/null || true
-    
-    iptables -t nat -D POSTROUTING -o "$TUN_NAME" -j MASQUERADE 2>/dev/null || true
-    iptables -t nat -I POSTROUTING 1 -o "$TUN_NAME" -j MASQUERADE
-    iptables -D FORWARD -o "$TUN_NAME" -j ACCEPT 2>/dev/null || true
-    iptables -I FORWARD 1 -o "$TUN_NAME" -j ACCEPT
-    iptables -D FORWARD -i "$TUN_NAME" -j ACCEPT 2>/dev/null || true
-    iptables -I FORWARD 1 -i "$TUN_NAME" -j ACCEPT
-) &
+sleep 3
+
+# Динамически вытягиваем выданный сервером IP
+ASSIGNED_IP=$(grep -oE 'Received IP assignment from server: IPv4=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)' /var/log/fptn/fptn-client-cli.log 2>/dev/null | tail -n 1 | cut -d'=' -f2)
+
+if [ -n "$ASSIGNED_IP" ]; then
+    ip addr flush dev "$TUN_NAME" 2>/dev/null || true
+    ip addr add "${ASSIGNED_IP}/16" dev "$TUN_NAME" 2>/dev/null || true
+fi
+
+ip link set "$TUN_NAME" up 2>/dev/null || true
+
+iptables -t nat -D POSTROUTING -o "$TUN_NAME" -j MASQUERADE 2>/dev/null || true
+iptables -t nat -I POSTROUTING 1 -o "$TUN_NAME" -j MASQUERADE
+iptables -D FORWARD -o "$TUN_NAME" -j ACCEPT 2>/dev/null || true
+iptables -I FORWARD 1 -o "$TUN_NAME" -j ACCEPT
+iptables -D FORWARD -i "$TUN_NAME" -j ACCEPT 2>/dev/null || true
+iptables -I FORWARD 1 -i "$TUN_NAME" -j ACCEPT
 
 wait $CLI_PID
