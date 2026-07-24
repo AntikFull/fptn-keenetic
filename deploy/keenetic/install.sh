@@ -74,6 +74,7 @@ read_input() {
     _res=""
     if [ "$AUTO_ACCEPT" = "yes" ]; then
         _res="$_default_val"
+        echo "$_res"
     else
         read -r _res 2>/dev/null || _res=""
         _res=${_res:-$_default_val}
@@ -129,17 +130,20 @@ elif which ndmc >/dev/null 2>&1; then
     while true; do
         C_KTUN="OpkgTun${TUN_IDX}"
         C_LTUN="opkgtun${TUN_IDX}"
-        IF_INFO=$(ndmc -c "show interface $C_KTUN" 2>/dev/null || true)
-        if echo "$IF_INFO" | grep -q "Command error"; then
+        IF_INFO=$( (ndmc -c "show interface $C_KTUN" 2>/dev/null) || echo "Command error" )
+        if echo "$IF_INFO" | grep -qi "error"; then
+            # Интерфейс свободен
             DEFAULT_KTUN=$C_KTUN
             DEFAULT_LTUN=$C_LTUN
             break
         elif echo "$IF_INFO" | grep -qi "Fptn"; then
+            # Этот интерфейс уже принадлежит FPTN
             DEFAULT_KTUN=$C_KTUN
             DEFAULT_LTUN=$C_LTUN
             break
         fi
         TUN_IDX=$((TUN_IDX + 1))
+        if [ "$TUN_IDX" -gt 10 ]; then break; fi
     done
 fi
 
@@ -227,20 +231,20 @@ echo "[3/7] Регистрация интерфейса $USER_KTUN в KeeneticOS
 if ! which ndmc >/dev/null 2>&1; then
     echo "Внимание: Утилита ndmc CLI не найдена / Warning: ndmc CLI not found. Skip interface setup."
 else
-    if ndmc -c "show interface $USER_KTUN" >/dev/null 2>&1; then
+    if (ndmc -c "show interface $USER_KTUN" >/dev/null 2>&1); then
         echo "Интерфейс $USER_KTUN уже существует / Interface $USER_KTUN already exists."
     else
         echo "Создание интерфейса $USER_KTUN типа OpkgTun / Creating OpkgTun interface $USER_KTUN..."
-        ndmc -c "interface $USER_KTUN type OpkgTun"
+        ndmc -c "interface $USER_KTUN type OpkgTun" 2>/dev/null || true
     fi
     
-    ndmc -c "interface $USER_KTUN description Fptn"
-    ndmc -c "interface $USER_KTUN security-level public"
-    ndmc -c "interface $USER_KTUN ip address 10.0.0.1 255.255.255.255"
-    ndmc -c "interface $USER_KTUN ip global 50000"
-    ndmc -c "interface $USER_KTUN ip tcp adjust-mss pmtu"
-    ndmc -c "interface $USER_KTUN up"
-    ndmc -c "system configuration save"
+    ndmc -c "interface $USER_KTUN description Fptn" 2>/dev/null || true
+    ndmc -c "interface $USER_KTUN security-level public" 2>/dev/null || true
+    ndmc -c "interface $USER_KTUN ip address 10.0.0.1 255.255.255.255" 2>/dev/null || true
+    ndmc -c "interface $USER_KTUN ip global 50000" 2>/dev/null || true
+    ndmc -c "interface $USER_KTUN ip tcp adjust-mss pmtu" 2>/dev/null || true
+    ndmc -c "interface $USER_KTUN up" 2>/dev/null || true
+    ndmc -c "system configuration save" 2>/dev/null || true
     echo "Интерфейс $USER_KTUN успешно настроен / Interface $USER_KTUN successfully configured."
 fi
 
