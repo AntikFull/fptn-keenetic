@@ -20,7 +20,7 @@ if [ -z "$TOKEN" ]; then
 fi
 
 # Строим аргументы
-ARGS="--access-token $TOKEN --tun-interface-name ${TUN_INTERFACE:-opkgtun1} --disable-routing"
+ARGS="--access-token $TOKEN --tun-interface-name ${TUN_INTERFACE:-opkgtun11} --disable-routing"
 
 if [ -n "$PREFERRED_SERVER" ]; then
     ARGS="$ARGS --preferred-server $PREFERRED_SERVER"
