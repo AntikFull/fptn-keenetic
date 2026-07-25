@@ -29,7 +29,7 @@ fi
 KTUN=$(echo "$IFNAME" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
 PRECMD=""
 PREARGS=""
-POSTCMD="ndmc -c 'interface ${KTUN} up' >/dev/null 2>&1 || true"
+POSTCMD="ndmc -c 'interface ${KTUN} ip defaultgateway 172.20.0.1' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} up' >/dev/null 2>&1 || true"
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 . /opt/etc/init.d/rc.func
