@@ -7,7 +7,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.1.14-keenetic');
+define('CURRENT_VERSION', 'v1.1.15-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -286,36 +286,34 @@ if (isset($_GET['ajax'])) {
         exit;
     }
     
-    if ($ajax_action === 'check_pings') {
-        read_config();
-        $servers_data = parse_servers_from_token($config['TOKEN'] ?? '');
-        $results = [];
-        foreach ($servers_data as $srv) {
-            $host = $srv['host'];
-            $port = (int)($srv['port'] ?? 443);
-            $pings = [];
-            for ($i = 0; $i < 3; $i++) {
-                $start = microtime(true);
-                $fp = @fsockopen($host, $port, $errno, $errstr, 1.2);
-                if ($fp) {
-                    $end = microtime(true);
-                    fclose($fp);
-                    $pings[] = round(($end - $start) * 1000);
-                } else {
-                    $pings[] = -1;
-                }
-            }
-            $valid = array_filter($pings, function($p) { return $p >= 0; });
-            $avg_ping = (!empty($valid) && count($valid) === count($pings)) ? round(array_sum($valid) / count($valid)) : -1;
-            $results[] = [
-                'name' => $srv['name'],
-                'host' => $host,
-                'port' => $port,
-                'ping_ms' => $avg_ping,
-                'online' => ($avg_ping >= 0)
-            ];
+    if ($ajax_action === 'check_ping') {
+        $host = trim($_GET['host'] ?? '');
+        $port = (int)($_GET['port'] ?? 443);
+        if (empty($host)) {
+            echo json_encode(['success' => false, 'message' => 'Пустой хост']);
+            exit;
         }
-        echo json_encode(['success' => true, 'servers' => $results]);
+        $pings = [];
+        for ($i = 0; $i < 3; $i++) {
+            $start = microtime(true);
+            $fp = @fsockopen($host, $port, $errno, $errstr, 0.8);
+            if ($fp) {
+                $end = microtime(true);
+                fclose($fp);
+                $pings[] = round(($end - $start) * 1000);
+            } else {
+                $pings[] = -1;
+            }
+        }
+        $valid = array_filter($pings, function($p) { return $p >= 0; });
+        $avg_ping = (!empty($valid) && count($valid) === count($pings)) ? round(array_sum($valid) / count($valid)) : -1;
+        echo json_encode([
+            'success' => true,
+            'host' => $host,
+            'port' => $port,
+            'ping_ms' => $avg_ping,
+            'online' => ($avg_ping >= 0)
+        ]);
         exit;
     }
 
@@ -1339,7 +1337,7 @@ if (!empty($config['TOKEN'])) {
                                     </select>
                                     <button type="button" class="btn btn-secondary" onclick="addServerToPriority()" style="white-space: nowrap; padding: 6px 14px; font-size: 13px;">➕ Добавить</button>
                                 </div>
-                                <button type="button" id="ping-servers-btn" class="btn btn-secondary" onclick="checkServerPings()" style="width: 100%; font-size: 13px; padding: 7px 12px; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); color: #60a5fa;">⚡ Замерить пинг всех серверов</button>
+                                <button type="button" id="ping-servers-btn" class="btn btn-secondary" onclick="checkServerPings(event); return false;" style="width: 100%; font-size: 13px; padding: 7px 12px; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); color: #60a5fa;">⚡ Замерить пинг всех серверов</button>
                             </div>
 
                             <div style="margin-bottom: 16px;">
@@ -1422,27 +1420,52 @@ if (!empty($config['TOKEN'])) {
             }
         }
 
-        function checkServerPings() {
+        function checkServerPings(e) {
+            if (e && e.preventDefault) {
+                e.preventDefault();
+            }
             const btn = document.getElementById('ping-servers-btn');
             if (btn) {
                 btn.disabled = true;
                 btn.textContent = '⏳ Измерение задержек всех серверов...';
             }
-            fetch('?ajax=check_pings')
-                .then(r => r.json())
-                .then(data => {
-                    if (btn) {
-                        btn.disabled = false;
-                        btn.textContent = '⚡ Замерить пинг всех серверов';
-                    }
-                    if (data.success && Array.isArray(data.servers)) {
-                        data.servers.forEach(srv => {
+
+            if (!Array.isArray(serversData) || serversData.length === 0) {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '⚡ Замерить пинг всех серверов';
+                }
+                return;
+            }
+
+            // Предварительная индикация "Пинг..."
+            serversData.forEach(srv => {
+                const option = document.querySelector(`#add-server-select option[data-host="${srv.host}"]`);
+                if (option) {
+                    option.textContent = `${srv.name} (${srv.host}:${srv.port || 443}) — ⏳ Пинг...`;
+                }
+                const badges = document.querySelectorAll(`.ping-badge[data-host="${srv.host}"]`);
+                badges.forEach(b => {
+                    b.style.color = 'var(--text-muted)';
+                    b.textContent = '[⏳ Пинг...]';
+                });
+            });
+
+            const promises = serversData.map(srv => {
+                return fetch(`?ajax=check_ping&host=${encodeURIComponent(srv.host)}&port=${encodeURIComponent(srv.port || 443)}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.auth_required) {
+                            window.location.reload();
+                            return;
+                        }
+                        if (data.success) {
                             let pingStr = '';
                             let color = '#ef4444';
-                            if (srv.online && srv.ping_ms >= 0) {
-                                color = srv.ping_ms < 60 ? '#10b981' : (srv.ping_ms < 120 ? '#f59e0b' : '#ef4444');
-                                const icon = srv.ping_ms < 60 ? '🟢' : (srv.ping_ms < 120 ? '🟡' : '🔴');
-                                pingStr = `${icon} ${srv.ping_ms} ms`;
+                            if (data.online && data.ping_ms >= 0) {
+                                color = data.ping_ms < 60 ? '#10b981' : (data.ping_ms < 120 ? '#f59e0b' : '#ef4444');
+                                const icon = data.ping_ms < 60 ? '🟢' : (data.ping_ms < 120 ? '🟡' : '🔴');
+                                pingStr = `${icon} ${data.ping_ms} ms`;
                             } else {
                                 pingStr = '🔴 Offline';
                             }
@@ -1450,7 +1473,7 @@ if (!empty($config['TOKEN'])) {
                             // 1. Обновляем опции в выпадающем списке
                             const option = document.querySelector(`#add-server-select option[data-host="${srv.host}"]`);
                             if (option) {
-                                option.textContent = `${srv.name} (${srv.host}:${srv.port}) — ${pingStr}`;
+                                option.textContent = `${srv.name} (${srv.host}:${srv.port || 443}) — ${pingStr}`;
                             }
 
                             // 2. Обновляем плашки в списке приоритетов
@@ -1459,15 +1482,17 @@ if (!empty($config['TOKEN'])) {
                                 b.style.color = color;
                                 b.textContent = `[${pingStr}]`;
                             });
-                        });
-                    }
-                })
-                .catch(() => {
-                    if (btn) {
-                        btn.disabled = false;
-                        btn.textContent = '⚡ Замерить пинг всех серверов';
-                    }
-                });
+                        }
+                    })
+                    .catch(() => {});
+            });
+
+            Promise.all(promises).then(() => {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '⚡ Замерить пинг всех серверов';
+                }
+            });
         }
 
         function checkUpdates() {
