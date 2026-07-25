@@ -243,8 +243,12 @@ $password_set = !empty($config['WEB_PASSWORD']);
 $authenticated = !$password_set || (isset($_SESSION['auth']) && $_SESSION['auth'] === true);
 
 // Обработка AJAX запросов (проверка обновлений, автообновление статуса и запуск обновления)
-if (isset($_GET['ajax']) && $authenticated) {
+if (isset($_GET['ajax'])) {
     header('Content-Type: application/json');
+    if (!$authenticated) {
+        echo json_encode(['success' => false, 'message' => 'Сессия истекла. Пожалуйста, войдите в систему заново.', 'auth_required' => true]);
+        exit;
+    }
     $ajax_action = $_GET['ajax'];
     
     if ($ajax_action === 'get_status') {
@@ -598,7 +602,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         
                         $cmd = $init_script . " " . $action . " 2>&1";
                         exec($cmd, $output, $return_var);
-                        $message = 'Выполнено действие: ' . $action . '. ' . htmlspecialchars(implode(" ", $output));
+                        $raw_out = implode(" ", $output);
+                        $clean_out = preg_replace('/\x1b\[[0-9;]*[a-zA-Z]/', '', $raw_out);
+                        $message = 'Выполнено действие: ' . htmlspecialchars($action) . '. ' . htmlspecialchars(trim($clean_out));
                     }
                 }
             }
@@ -1424,6 +1430,10 @@ if (!empty($config['TOKEN'])) {
             fetch(`?ajax=install_update&csrf_token=${encodeURIComponent(CSRF_TOKEN)}`)
                 .then(r => r.json())
                 .then(data => {
+                    if (data.auth_required) {
+                        window.location.reload();
+                        return;
+                    }
                     if (data.success) {
                         if (block) {
                             block.innerHTML = `✅ <b>${data.message}</b><br><span style="font-size: 11px;">Перезагрузка страницы через 3 секунды...</span>`;
