@@ -7,7 +7,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.1.13-keenetic');
+define('CURRENT_VERSION', 'v1.1.14-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -1184,6 +1184,7 @@ if (!empty($config['TOKEN'])) {
         setInterval(fetchRealtimeStatus, 3000);
         document.addEventListener('DOMContentLoaded', () => {
             renderPriorityList();
+            setTimeout(checkServerPings, 300);
         });
     </script>
 </head>
@@ -1325,20 +1326,20 @@ if (!empty($config['TOKEN'])) {
                             <input type="hidden" name="action" value="save_server">
                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
                             
-                            <div class="form-group">
+                            <div class="form-group" style="margin-bottom: 12px;">
                                 <label style="font-size: 13px;">Добавить сервер в список приоритетов:</label>
-                                <div style="display: flex; gap: 8px;">
-                                    <select id="add-server-select" style="flex: 1;">
+                                <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                                    <select id="add-server-select" style="flex: 1; min-width: 0; text-overflow: ellipsis;">
                                         <option value="">-- Выберите сервер --</option>
                                         <?php foreach ($servers_data as $srv): ?>
-                                            <option value="<?php echo htmlspecialchars($srv['name']); ?>">
+                                            <option value="<?php echo htmlspecialchars($srv['name']); ?>" data-host="<?php echo htmlspecialchars($srv['host']); ?>">
                                                 <?php echo htmlspecialchars($srv['name']); ?> (<?php echo htmlspecialchars($srv['host']); ?>:<?php echo $srv['port']; ?>)
                                             </option>
                                         <?php endforeach; ?>
                                     </select>
-                                    <button type="button" class="btn btn-secondary" onclick="addServerToPriority()" style="white-space: nowrap; padding: 6px 12px; font-size: 13px;">➕ Добавить</button>
-                                    <button type="button" id="ping-servers-btn" class="btn btn-secondary" onclick="checkServerPings()" style="white-space: nowrap; padding: 6px 12px; font-size: 13px;">⚡ Замерить пинг</button>
+                                    <button type="button" class="btn btn-secondary" onclick="addServerToPriority()" style="white-space: nowrap; padding: 6px 14px; font-size: 13px;">➕ Добавить</button>
                                 </div>
+                                <button type="button" id="ping-servers-btn" class="btn btn-secondary" onclick="checkServerPings()" style="width: 100%; font-size: 13px; padding: 7px 12px; display: flex; align-items: center; justify-content: center; gap: 6px; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); color: #60a5fa;">⚡ Замерить пинг всех серверов</button>
                             </div>
 
                             <div style="margin-bottom: 16px;">
@@ -1425,26 +1426,38 @@ if (!empty($config['TOKEN'])) {
             const btn = document.getElementById('ping-servers-btn');
             if (btn) {
                 btn.disabled = true;
-                btn.textContent = '⏳ Пинг...';
+                btn.textContent = '⏳ Измерение задержек всех серверов...';
             }
             fetch('?ajax=check_pings')
                 .then(r => r.json())
                 .then(data => {
                     if (btn) {
                         btn.disabled = false;
-                        btn.textContent = '⚡ Замерить пинг';
+                        btn.textContent = '⚡ Замерить пинг всех серверов';
                     }
                     if (data.success && Array.isArray(data.servers)) {
                         data.servers.forEach(srv => {
+                            let pingStr = '';
+                            let color = '#ef4444';
+                            if (srv.online && srv.ping_ms >= 0) {
+                                color = srv.ping_ms < 60 ? '#10b981' : (srv.ping_ms < 120 ? '#f59e0b' : '#ef4444');
+                                const icon = srv.ping_ms < 60 ? '🟢' : (srv.ping_ms < 120 ? '🟡' : '🔴');
+                                pingStr = `${icon} ${srv.ping_ms} ms`;
+                            } else {
+                                pingStr = '🔴 Offline';
+                            }
+
+                            // 1. Обновляем опции в выпадающем списке
+                            const option = document.querySelector(`#add-server-select option[data-host="${srv.host}"]`);
+                            if (option) {
+                                option.textContent = `${srv.name} (${srv.host}:${srv.port}) — ${pingStr}`;
+                            }
+
+                            // 2. Обновляем плашки в списке приоритетов
                             const badges = document.querySelectorAll(`.ping-badge[data-host="${srv.host}"]`);
                             badges.forEach(b => {
-                                if (srv.online && srv.ping_ms >= 0) {
-                                    b.style.color = srv.ping_ms < 60 ? '#10b981' : (srv.ping_ms < 120 ? '#f59e0b' : '#ef4444');
-                                    b.textContent = `${srv.ping_ms} ms`;
-                                } else {
-                                    b.style.color = '#ef4444';
-                                    b.textContent = 'Offline';
-                                }
+                                b.style.color = color;
+                                b.textContent = `[${pingStr}]`;
                             });
                         });
                     }
@@ -1452,7 +1465,7 @@ if (!empty($config['TOKEN'])) {
                 .catch(() => {
                     if (btn) {
                         btn.disabled = false;
-                        btn.textContent = '⚡ Замерить пинг';
+                        btn.textContent = '⚡ Замерить пинг всех серверов';
                     }
                 });
         }
