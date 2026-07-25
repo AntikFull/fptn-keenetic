@@ -535,15 +535,6 @@ boost::asio::awaitable<bool> WebsocketClient::ReceiveIPAssignment() {
     SPDLOG_INFO("Received IP assignment from server: IPv4={}, IPv6={}",
         ipv4_str, ipv6_str);
 
-#if defined(__linux__)
-    if (!ipv4_str.empty()) {
-      std::string cmd = "ip addr replace " + ipv4_str + "/32 dev " + config_.tun_interface_name + " >/dev/null 2>&1";
-      system(cmd.c_str());
-      std::string ndmc_cmd = "ndmc -c 'interface " + config_.tun_interface_name + " ip address " + ipv4_str + " 255.255.255.255' >/dev/null 2>&1";
-      system(ndmc_cmd.c_str());
-    }
-#endif
-
     co_return true;
   } catch (const std::exception& e) {
     SPDLOG_ERROR("ReceiveIPAssignment exception: {}", e.what());
