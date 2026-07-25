@@ -7,7 +7,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.1.17-keenetic');
+define('CURRENT_VERSION', 'v1.1.18-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -15,6 +15,17 @@ $conf_file = "/opt/etc/fptn-client.conf";
 $servers_file = "/opt/etc/fptn-servers.json";
 $cli_path = "/opt/bin/fptn-client-cli";
 $init_script = "/opt/etc/init.d/S53fptn-client";
+
+function parse_servers_from_token($token) {
+    global $servers_file;
+    if (file_exists($servers_file)) {
+        $json_data = json_decode(file_get_contents($servers_file), true);
+        if ($json_data && isset($json_data['servers'])) {
+            return $json_data['servers'];
+        }
+    }
+    return [];
+}
 
 // Конфигурация Сервера FPTN
 $server_conf_file = "/opt/etc/fptn-server.conf";
