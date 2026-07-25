@@ -1,1 +1,1 @@
-v1.1.1-keenetic
+v1.1.2-keenetic

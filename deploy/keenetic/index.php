@@ -7,7 +7,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.1.1-keenetic');
+define('CURRENT_VERSION', 'v1.1.2-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -377,7 +377,13 @@ if (isset($_GET['ajax']) && $authenticated) {
             echo json_encode(['success' => false, 'message' => "Не удалось скачать новую веб-панель index.php: HTTP {$res_php['code']}"]);
             exit;
         }
-        file_put_contents($tmp_php, $res_php['data']);
+        // 3. Обновление скрипта службы S53fptn-client
+        $init_url = "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/S53fptn-client";
+        $res_init = http_get_contents($init_url, 15);
+        if ($res_init['code'] === 200 && !empty($res_init['data'])) {
+            file_put_contents("/opt/etc/init.d/S53fptn-client", $res_init['data']);
+            chmod("/opt/etc/init.d/S53fptn-client", 0755);
+        }
         
         // 1. Останавливаем службу
         exec("{$init_script} stop 2>&1");
