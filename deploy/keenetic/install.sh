@@ -73,7 +73,7 @@ fi
 # Динамическое определение версии релиза из version.txt
 REMOTE_VER=$(curl -sL --connect-timeout 5 "${GITHUB_RAW_BASE}/deploy/keenetic/version.txt" 2>/dev/null | tr -d '\r\n')
 if [ -z "$REMOTE_VER" ]; then
-    REMOTE_VER="v1.1.12-keenetic"
+    REMOTE_VER="v1.1.13-keenetic"
 fi
 
 # Универсальная функция скачивания с каскадом прокси-зеркал / Download helper with mirror fallback

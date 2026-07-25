@@ -7,7 +7,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.1.12-keenetic');
+define('CURRENT_VERSION', 'v1.1.13-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -286,6 +286,39 @@ if (isset($_GET['ajax'])) {
         exit;
     }
     
+    if ($ajax_action === 'check_pings') {
+        read_config();
+        $servers_data = parse_servers_from_token($config['TOKEN'] ?? '');
+        $results = [];
+        foreach ($servers_data as $srv) {
+            $host = $srv['host'];
+            $port = (int)($srv['port'] ?? 443);
+            $pings = [];
+            for ($i = 0; $i < 3; $i++) {
+                $start = microtime(true);
+                $fp = @fsockopen($host, $port, $errno, $errstr, 1.2);
+                if ($fp) {
+                    $end = microtime(true);
+                    fclose($fp);
+                    $pings[] = round(($end - $start) * 1000);
+                } else {
+                    $pings[] = -1;
+                }
+            }
+            $valid = array_filter($pings, function($p) { return $p >= 0; });
+            $avg_ping = (!empty($valid) && count($valid) === count($pings)) ? round(array_sum($valid) / count($valid)) : -1;
+            $results[] = [
+                'name' => $srv['name'],
+                'host' => $host,
+                'port' => $port,
+                'ping_ms' => $avg_ping,
+                'online' => ($avg_ping >= 0)
+            ];
+        }
+        echo json_encode(['success' => true, 'servers' => $results]);
+        exit;
+    }
+
     if ($ajax_action === 'check_update') {
         $github_raw_url = 'https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/version.txt';
         $res = http_get_contents($github_raw_url, 4);
@@ -563,9 +596,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } else {
                         $server = trim($_POST['server'] ?? '');
                     }
+                    $fallback = isset($_POST['fallback_to_auto']) && $_POST['fallback_to_auto'] === '1' ? 'yes' : 'no';
                     $config['PREFERRED_SERVER'] = $server;
+                    $config['FALLBACK_TO_AUTO'] = $fallback;
                     if (write_config()) {
-                        $message = 'Список серверов по приоритету обновлен: ' . ($server ? htmlspecialchars($server) : 'Автовыбор');
+                        $message = 'Список серверов по приоритету обновлен: ' . ($server ? htmlspecialchars($server) : 'Автовыбор') . ' (Автовозврат: ' . ($fallback === 'yes' ? 'Включен' : 'Выключен') . ')';
                         
                         if ($service_running) {
                             $cmd = $init_script . " restart 2>&1";
@@ -1041,6 +1076,11 @@ if (!empty($config['TOKEN'])) {
 
         const serversData = <?php echo json_encode($servers_data ?? []); ?>;
         let priorityServers = <?php echo json_encode(array_values(array_filter(array_map('trim', explode(',', $config['PREFERRED_SERVER'] ?? ''))))); ?>;
+        const SERVER_HOST_MAP = <?php 
+            $map = [];
+            foreach ($servers_data as $s) { $map[$s['name']] = $s['host']; }
+            echo json_encode($map);
+        ?>;
 
         function renderPriorityList() {
             const listEl = document.getElementById('priority-server-list');
@@ -1059,10 +1099,14 @@ if (!empty($config['TOKEN'])) {
                 li.style.cssText = 'display: flex; align-items: center; justify-content: space-between; background: #1f293d; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px;';
                 
                 const badge = idx === 0 ? '🥇 1 (Основной): ' : (idx === 1 ? '🥈 2 (Резерв 1): ' : `🥉 ${idx + 1} (Резерв ${idx}): `);
+                const host = SERVER_HOST_MAP[name] || '';
                 
                 li.innerHTML = `
                     <input type="hidden" name="servers[]" value="${name}">
-                    <span style="font-weight: 500;">${badge}${name}</span>
+                    <div style="display: flex; align-items: center;">
+                        <span style="font-weight: 500;">${badge}${name}</span>
+                        ${host ? `<span class="ping-badge" data-host="${host}" style="margin-left: 8px; font-size: 11px; font-weight: 600;"></span>` : ''}
+                    </div>
                     <div style="display: flex; gap: 4px;">
                         ${idx > 0 ? `<button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 11px;" onclick="movePriority(${idx}, -1)">⬆</button>` : ''}
                         ${idx < priorityServers.length - 1 ? `<button type="button" class="btn btn-secondary" style="padding: 2px 6px; font-size: 11px;" onclick="movePriority(${idx}, 1)">⬇</button>` : ''}
@@ -1293,6 +1337,7 @@ if (!empty($config['TOKEN'])) {
                                         <?php endforeach; ?>
                                     </select>
                                     <button type="button" class="btn btn-secondary" onclick="addServerToPriority()" style="white-space: nowrap; padding: 6px 12px; font-size: 13px;">➕ Добавить</button>
+                                    <button type="button" id="ping-servers-btn" class="btn btn-secondary" onclick="checkServerPings()" style="white-space: nowrap; padding: 6px 12px; font-size: 13px;">⚡ Замерить пинг</button>
                                 </div>
                             </div>
 
@@ -1304,6 +1349,17 @@ if (!empty($config['TOKEN'])) {
                                 <p id="auto-select-hint" style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
                                     💡 Список пуст: используется <b>Автовыбор (Автоматический выбор наибыстрейшего сервера)</b>.
                                 </p>
+                            </div>
+
+                            <div style="margin-bottom: 16px; background: rgba(59, 130, 246, 0.03); padding: 10px 12px; border-radius: 8px; border: 1px dashed var(--border-color); display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                                <div>
+                                    <span style="font-size: 12px; font-weight: 600; display: block; color: var(--text-color);">Переходить в Автовыбор при отвале серверов</span>
+                                    <span style="font-size: 11px; color: var(--text-muted);">Если все выбранные сервера недоступны — временно уйти на наибыстрейший доступный сервер</span>
+                                </div>
+                                <label class="switch" style="position: relative; display: inline-block; width: 40px; height: 20px; flex-shrink: 0;">
+                                    <input type="checkbox" name="fallback_to_auto" value="1" <?php echo ($config['FALLBACK_TO_AUTO'] ?? 'yes') === 'yes' ? 'checked' : ''; ?> style="opacity: 0; width: 0; height: 0;">
+                                    <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .3s; border-radius: 20px;"></span>
+                                </label>
                             </div>
 
                             <div style="display: flex; gap: 8px;">
@@ -1363,6 +1419,42 @@ if (!empty($config['TOKEN'])) {
                 input.type = 'password';
                 btn.textContent = '👁️ Показать';
             }
+        }
+
+        function checkServerPings() {
+            const btn = document.getElementById('ping-servers-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '⏳ Пинг...';
+            }
+            fetch('?ajax=check_pings')
+                .then(r => r.json())
+                .then(data => {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = '⚡ Замерить пинг';
+                    }
+                    if (data.success && Array.isArray(data.servers)) {
+                        data.servers.forEach(srv => {
+                            const badges = document.querySelectorAll(`.ping-badge[data-host="${srv.host}"]`);
+                            badges.forEach(b => {
+                                if (srv.online && srv.ping_ms >= 0) {
+                                    b.style.color = srv.ping_ms < 60 ? '#10b981' : (srv.ping_ms < 120 ? '#f59e0b' : '#ef4444');
+                                    b.textContent = `${srv.ping_ms} ms`;
+                                } else {
+                                    b.style.color = '#ef4444';
+                                    b.textContent = 'Offline';
+                                }
+                            });
+                        });
+                    }
+                })
+                .catch(() => {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = '⚡ Замерить пинг';
+                    }
+                });
         }
 
         function checkUpdates() {
