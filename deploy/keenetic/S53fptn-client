@@ -31,7 +31,7 @@ if [ -n "$PREFERRED_SERVER" ]; then
             SRV_PORT=$(grep -A 3 "\"name\": \"$FIRST_SERVER\"" "$SERVERS_FILE" 2>/dev/null | grep '"port"' | tr -dc '0-9')
             PORT_TO_CHECK="${SRV_PORT:-443}"
             if [ -n "$SRV_HOST" ]; then
-                if nc -z -w 1 "$SRV_HOST" "$PORT_TO_CHECK" >/dev/null 2>&1; then
+                if curl -s -k --connect-timeout 2 "https://${SRV_HOST}:${PORT_TO_CHECK}" >/dev/null 2>&1; then
                     ARGS="${ARGS} --preferred-server ${FIRST_SERVER}"
                 else
                     echo "Сервер ${FIRST_SERVER} [${SRV_HOST}] недоступен. Автоматическое переключение на автовыбор."
@@ -48,7 +48,7 @@ fi
 KTUN=$(echo "$IFNAME" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
 PRECMD=""
 PREARGS=""
-POSTCMD="ndmc -c 'interface ${KTUN} ip address 10.0.0.1 255.255.255.255' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip global 50000' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip mtu 1360' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} up' >/dev/null 2>&1; ip link set dev ${IFNAME} mtu 1360 2>/dev/null || true; ip link set dev ${IFNAME} up 2>/dev/null || true; ip addr add 10.0.0.1/8 dev ${IFNAME} 2>/dev/null || true; iptables -t nat -I POSTROUTING 1 -o ${IFNAME} -j MASQUERADE 2>/dev/null || true; iptables -I FORWARD 1 -o ${IFNAME} -j ACCEPT 2>/dev/null || true; iptables -I FORWARD 1 -i ${IFNAME} -j ACCEPT 2>/dev/null || true; iptables -t mangle -I POSTROUTING 1 -o ${IFNAME} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true"
+POSTCMD="ip addr flush dev ${IFNAME} 2>/dev/null || true; ndmc -c 'interface ${KTUN} ip address 172.31.254.1 255.255.255.255' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip global 50000' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip mtu 1360' >/dev/null 2>&1; ip link set dev ${IFNAME} mtu 1360 2>/dev/null || true; ip link set dev ${IFNAME} up 2>/dev/null || true; ip addr add 172.31.254.1/32 dev ${IFNAME} 2>/dev/null || true; iptables -t nat -I POSTROUTING 1 -o ${IFNAME} -j MASQUERADE 2>/dev/null || true; iptables -I FORWARD 1 -o ${IFNAME} -j ACCEPT 2>/dev/null || true; iptables -I FORWARD 1 -i ${IFNAME} -j ACCEPT 2>/dev/null || true; iptables -t mangle -I POSTROUTING 1 -o ${IFNAME} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true"
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 . /opt/etc/init.d/rc.func

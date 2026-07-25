@@ -10,6 +10,10 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <memory>
 #include <string>
 #include <tuntap++.hh>  // NOLINT(build/include_order)
+#if defined(__linux__)
+#include <sys/ioctl.h>
+#include <linux/if_tun.h>
+#endif
 
 #if defined(__linux__)
 #include <arpa/inet.h>
@@ -85,6 +89,12 @@ class LinuxTunDevice {
   void SetMTU(int mtu) { tun_->mtu(mtu); }
 
   void BringUp() {
+#if defined(__linux__)
+    if (tun_) {
+      int carrier = 1;
+      ioctl(tun_->native_handle(), TUNSETCARRIER, &carrier);
+    }
+#endif
     tun_->up();
 #if defined(__linux__)
     if (tun_) {
