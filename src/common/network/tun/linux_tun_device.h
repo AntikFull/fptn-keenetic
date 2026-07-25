@@ -19,6 +19,9 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <sys/socket.h>
 #include <unistd.h>
 #include <cstring>
+#ifndef TUNSETCARRIER
+#define TUNSETCARRIER _IOW('T', 226, int)
+#endif
 #endif
 
 namespace fptn::common::network {
@@ -81,7 +84,15 @@ class LinuxTunDevice {
 
   void SetMTU(int mtu) { tun_->mtu(mtu); }
 
-  void BringUp() { tun_->up(); }
+  void BringUp() {
+#if defined(__linux__)
+    if (tun_) {
+      int carrier = 1;
+      ioctl(tun_->native_handle(), TUNSETCARRIER, &carrier);
+    }
+#endif
+    tun_->up();
+  }
 
   int Read(void* buffer, int size) {
     return tun_->read(buffer, static_cast<std::size_t>(size));
