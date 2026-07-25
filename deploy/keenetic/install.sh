@@ -73,7 +73,7 @@ fi
 # Динамическое определение версии релиза из version.txt
 REMOTE_VER=$(curl -sL --connect-timeout 5 "${GITHUB_RAW_BASE}/deploy/keenetic/version.txt" 2>/dev/null | tr -d '\r\n')
 if [ -z "$REMOTE_VER" ]; then
-    REMOTE_VER="v1.1.20-keenetic"
+    REMOTE_VER="v1.1.21-keenetic"
 fi
 
 # Универсальная функция скачивания с каскадом прокси-зеркал / Download helper with mirror fallback
@@ -312,9 +312,12 @@ else
     
     ndmc -c "interface $USER_KTUN description Fptn" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN security-level public" 2>/dev/null || true
-    ndmc -c "interface $USER_KTUN ip address 10.0.0.1 255.255.255.255" 2>/dev/null || true
+    ndmc -c "interface $USER_KTUN ip address 172.31.254.1 255.255.255.255" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN ip global 50000" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN ip tcp adjust-mss pmtu" 2>/dev/null || true
+    ndmc -c "access-list _WEBADMIN_$USER_KTUN permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0" 2>/dev/null || true
+    ndmc -c "interface $USER_KTUN ip access-group _WEBADMIN_$USER_KTUN in" 2>/dev/null || true
+    ndmc -c "access-list _WEBADMIN_$USER_KTUN auto-delete" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN up" 2>/dev/null || true
     ndmc -c "system configuration save" 2>/dev/null || true
     echo "Интерфейс $USER_KTUN успешно настроен / Interface $USER_KTUN successfully configured."
