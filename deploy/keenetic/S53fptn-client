@@ -23,10 +23,25 @@ IFNAME="${TUN_INTERFACE:-opkgtun1}"
 ARGS="--access-token ${TOKEN} --tun-interface-name ${IFNAME} --disable-routing"
 
 if [ -n "$PREFERRED_SERVER" ]; then
-    # Берем первый сервер из списка приоритетов (без запятых)
-    FIRST_SERVER=$(echo "$PREFERRED_SERVER" | cut -d',' -f1)
+    FIRST_SERVER=$(echo "$PREFERRED_SERVER" | cut -d',' -f1 | tr -d ' ')
     if [ -n "$FIRST_SERVER" ]; then
-        ARGS="${ARGS} --preferred-server ${FIRST_SERVER}"
+        SERVERS_FILE="/opt/etc/fptn-servers.json"
+        if [ -f "$SERVERS_FILE" ]; then
+            SRV_HOST=$(grep -A 2 "\"name\": \"$FIRST_SERVER\"" "$SERVERS_FILE" 2>/dev/null | grep '"host"' | cut -d'"' -f4)
+            SRV_PORT=$(grep -A 3 "\"name\": \"$FIRST_SERVER\"" "$SERVERS_FILE" 2>/dev/null | grep '"port"' | tr -dc '0-9')
+            PORT_TO_CHECK="${SRV_PORT:-443}"
+            if [ -n "$SRV_HOST" ]; then
+                if nc -z -w 1 "$SRV_HOST" "$PORT_TO_CHECK" >/dev/null 2>&1; then
+                    ARGS="${ARGS} --preferred-server ${FIRST_SERVER}"
+                else
+                    echo "Сервер ${FIRST_SERVER} [${SRV_HOST}] недоступен. Автоматическое переключение на автовыбор."
+                fi
+            else
+                ARGS="${ARGS} --preferred-server ${FIRST_SERVER}"
+            fi
+        else
+            ARGS="${ARGS} --preferred-server ${FIRST_SERVER}"
+        fi
     fi
 fi
 
