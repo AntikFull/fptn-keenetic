@@ -44,7 +44,7 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ] || [ "$1" = "uninstall" ]; then
     pkill -9 -f "fptn-watchdog" >/dev/null 2>&1 || true
 
     echo "[2/5] Удаление бинарников и файлов веб-панели / Removing binary & web files..."
-    rm -f /opt/bin/fptn-client-cli /opt/etc/fptn-client.conf /opt/etc/init.d/S53fptn-client /opt/etc/fptn-watchdog.sh /opt/etc/lighttpd/conf.d/85-fptn.conf
+    rm -f /opt/bin/fptn-client-cli /opt/bin/fptn-watchdog.sh /opt/etc/fptn-client.conf /opt/etc/init.d/S53fptn-client /opt/etc/fptn-watchdog.sh /opt/etc/lighttpd/conf.d/85-fptn.conf
     rm -rf /opt/share/www/fptn
 
     echo "[3/5] Обновление конфигурации Lighttpd / Updating Lighttpd..."
