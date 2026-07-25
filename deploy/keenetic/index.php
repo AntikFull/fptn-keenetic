@@ -7,7 +7,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.1.15-keenetic');
+define('CURRENT_VERSION', 'v1.1.16-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -589,16 +589,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 elseif ($action === 'save_server') {
                     $servers_input = $_POST['servers'] ?? [];
                     if (is_array($servers_input)) {
-                        $clean_servers = array_filter(array_map('trim', $servers_input));
+                        $clean_servers = array_values(array_filter(array_map('trim', $servers_input)));
                         $server = implode(',', $clean_servers);
                     } else {
                         $server = trim($_POST['server'] ?? '');
+                        $clean_servers = array_filter([$server]);
                     }
+
+                    // Проверяем живой сервер для стартового приоритета
+                    $servers_data = parse_servers_from_token($config['TOKEN'] ?? '');
+                    $working_server = '';
+                    if (!empty($clean_servers)) {
+                        foreach ($clean_servers as $srv_name) {
+                            foreach ($servers_data as $sd) {
+                                if ($sd['name'] === $srv_name) {
+                                    $fp = @fsockopen($sd['host'], (int)($sd['port'] ?? 443), $errno, $errstr, 0.8);
+                                    if ($fp) {
+                                        fclose($fp);
+                                        $working_server = $srv_name;
+                                        break 2;
+                                    }
+                                }
+                            }
+                        }
+                        // Если все выбранные оффлайн - берём первый в списке
+                        if (empty($working_server)) {
+                            $working_server = $clean_servers[0];
+                        }
+                    }
+
                     $fallback = isset($_POST['fallback_to_auto']) && $_POST['fallback_to_auto'] === '1' ? 'yes' : 'no';
-                    $config['PREFERRED_SERVER'] = $server;
+                    $config['PREFERRED_SERVER'] = $working_server ? $working_server : $server;
                     $config['FALLBACK_TO_AUTO'] = $fallback;
                     if (write_config()) {
-                        $message = 'Список серверов по приоритету обновлен: ' . ($server ? htmlspecialchars($server) : 'Автовыбор') . ' (Автовозврат: ' . ($fallback === 'yes' ? 'Включен' : 'Выключен') . ')';
+                        $message = 'Приоритет серверов сохранён: ' . ($working_server ? htmlspecialchars($working_server) : 'Автовыбор');
                         
                         if ($service_running) {
                             $cmd = $init_script . " restart 2>&1";
