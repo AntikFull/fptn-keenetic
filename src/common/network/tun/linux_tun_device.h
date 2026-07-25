@@ -85,13 +85,13 @@ class LinuxTunDevice {
   void SetMTU(int mtu) { tun_->mtu(mtu); }
 
   void BringUp() {
+    tun_->up();
 #if defined(__linux__)
     if (tun_) {
       int carrier = 1;
       ioctl(tun_->native_handle(), TUNSETCARRIER, &carrier);
     }
 #endif
-    tun_->up();
   }
 
   int Read(void* buffer, int size) {
