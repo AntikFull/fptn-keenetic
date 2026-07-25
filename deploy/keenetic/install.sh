@@ -73,7 +73,7 @@ fi
 # Динамическое определение версии релиза из version.txt
 REMOTE_VER=$(curl -sL --connect-timeout 5 "${GITHUB_RAW_BASE}/deploy/keenetic/version.txt" 2>/dev/null | tr -d '\r\n')
 if [ -z "$REMOTE_VER" ]; then
-    REMOTE_VER="v1.1.11-keenetic"
+    REMOTE_VER="v1.1.12-keenetic"
 fi
 
 # Универсальная функция скачивания с каскадом прокси-зеркал / Download helper with mirror fallback
@@ -414,6 +414,7 @@ if which ndmc >/dev/null 2>&1; then
     ndmc -c "interface ${KTUN} description FPTN-Client" >/dev/null 2>&1 || true
     ndmc -c "interface ${KTUN} security-level public" >/dev/null 2>&1 || true
     ndmc -c "interface ${KTUN} ip address 172.20.0.2 255.255.0.0" >/dev/null 2>&1 || true
+    ndmc -c "interface ${KTUN} ip mtu 1360" >/dev/null 2>&1 || true
     ndmc -c "interface ${KTUN} ip defaultgateway 172.20.0.1" >/dev/null 2>&1 || true
     ndmc -c "interface ${KTUN} ip global 50000" >/dev/null 2>&1 || true
     ndmc -c "interface ${KTUN} up" >/dev/null 2>&1 || true
