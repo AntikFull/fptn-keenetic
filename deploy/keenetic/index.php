@@ -377,6 +377,8 @@ if (isset($_GET['ajax']) && $authenticated) {
             echo json_encode(['success' => false, 'message' => "Не удалось скачать новую веб-панель index.php: HTTP {$res_php['code']}"]);
             exit;
         }
+        file_put_contents($tmp_php, $res_php['data']);
+
         // 3. Обновление скрипта службы S53fptn-client
         $init_url = "https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/S53fptn-client";
         $res_init = http_get_contents($init_url, 15);
