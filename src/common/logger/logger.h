@@ -11,6 +11,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -59,7 +60,17 @@ inline bool init(const std::string& app_name) {
 #else
 
 #ifdef __linux__
-    const std::filesystem::path log_dir = "/var/log/fptn/";
+    // Каталог логов переопределяется через FPTN_LOG_DIR. Это нужно встраиваемым
+    // системам вроде KeeneticOS, где /var — это tmpfs (ОЗУ) и ротация логов
+    // расходовала бы оперативную память роутера вплоть до нехватки памяти.
+    const std::filesystem::path log_dir = []() {
+      if (const char* dir = getenv("FPTN_LOG_DIR")) {
+        if (dir[0] != '\0') {
+          return std::filesystem::path(dir);
+        }
+      }
+      return std::filesystem::path("/var/log/fptn/");
+    }();
 #elif defined(__APPLE__) && TARGET_OS_MAC
     const std::filesystem::path log_dir = []() {
       if (const char* home = getenv("HOME")) {
@@ -86,12 +97,32 @@ inline bool init(const std::string& app_name) {
         return false;
       }
     }
+    // Размер ротации тоже переопределяется окружением: на роутере разумно
+    // держать 1 МБ x 2, тогда как на сервере уместны прежние 12 МБ x 3.
+    const auto env_size_t = [](const char* name, std::size_t fallback) {
+      if (const char* value = getenv(name)) {
+        try {
+          const auto parsed = std::stoul(value);
+          if (parsed > 0) {
+            return static_cast<std::size_t>(parsed);
+          }
+        } catch (const std::exception&) {  // некорректное значение — берём по умолчанию
+        }
+      }
+      return fallback;
+    };
+    const std::size_t max_size_mb = env_size_t("FPTN_LOG_MAX_SIZE_MB", 12);
+    const std::size_t max_files = env_size_t("FPTN_LOG_MAX_FILES", 3);
+
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-        log_file.string(), 12 * 1024 * 1024, 3, true);
+        log_file.string(), max_size_mb * 1024 * 1024, max_files, true);
     auto logger = std::make_shared<spdlog::logger>(
         app_name, spdlog::sinks_init_list{console_sink, file_sink});
-    logger->flush_on(spdlog::level::debug);
+    // Принудительный сброс только на ошибках: flush_on(debug) сбрасывал буфер на
+    // каждой строке, что на флеш-накопителе роутера ощутимо дорого.
+    // Остальное сбрасывается фоновым таймером ниже.
+    logger->flush_on(spdlog::level::err);
     spdlog::flush_every(std::chrono::seconds(3));
 #endif
 

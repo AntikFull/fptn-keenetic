@@ -20,6 +20,11 @@ fi
 LOG_DIR="/opt/var/log"
 mkdir -p "$LOG_DIR"
 
+# Лог самого клиента. Значение должно совпадать с FPTN_LOG_DIR в S53fptn-client:
+# раньше здесь был путь /opt/var/log/fptn-client.log, которого не существует
+# (клиент писал в /var/log/fptn/), из-за чего failback не срабатывал никогда.
+CLIENT_LOG="${FPTN_LOG_DIR:-/opt/var/log/fptn}/fptn-client-cli.log"
+
 # 1. Проверяем, запущен ли сам процесс fptn-client-cli
 if ! (pgrep -x fptn-client-cli || pgrep -f "/opt/bin/fptn-client-cli") >/dev/null 2>&1; then
     # Если процесс упал, но служба включена - запускаем
@@ -30,7 +35,7 @@ fi
 
 # 2. [ЗАЩИТА CPU] Проверяем физический WAN (прямой интернет без VPN)
 # Пингуем в обход туннеля через дефолтный WAN роутера
-if ! ping -c 2 -W 2 1.1.1.1 >/dev/null 2>&1; then
+if ! ping -c 1 -W 2 1.1.1.1 >/dev/null 2>&1; then
     # Физического интернета нет - ничего не делаем, чтобы не нагружать роутер
     exit 0
 fi
@@ -93,8 +98,8 @@ else
             if [ $((NOW - LAST_CHECK)) -ge 900 ]; then
                 echo "$NOW" > "$LAST_FAILBACK_CHECK_FILE"
                 # Если служба сейчас работает на резервном сервере, перезапускаем для автовозврата на №1
-                if grep -q "Selected preferred server by priority" /opt/var/log/fptn-client.log 2>/dev/null; then
-                    if ! grep -q "Selected preferred server by priority: ${MAIN_SERVER}" /opt/var/log/fptn-client.log 2>/dev/null; then
+                if grep -q "Selected preferred server by priority" "$CLIENT_LOG" 2>/dev/null; then
+                    if ! grep -q "Selected preferred server by priority: ${MAIN_SERVER}" "$CLIENT_LOG" 2>/dev/null; then
                         echo "$(date): Attempting failback to primary server ${MAIN_SERVER}..." >> "$LOG_DIR/fptn-watchdog.log"
                         /opt/etc/init.d/S53fptn-client restart
                     fi

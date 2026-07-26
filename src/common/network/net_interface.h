@@ -144,6 +144,7 @@ class BaseNetInterface {
  *   void SetMTU(int mtu);
  *   void BringUp();
  *   int  Read(void* buffer, int size);
+ *   bool WaitForReadable(int timeout_ms);
  *   int  Write(const void* data, int size);
  *   void SetStopFlag(const std::atomic<bool>* running);
  *
@@ -261,6 +262,10 @@ class GenericTunInterface final
   }
 
   void RunReader() {
+    // Сколько ждать готовности дескриптора, когда читать нечего. Таймаут нужен
+    // только чтобы периодически перепроверять running_ при остановке.
+    constexpr int kReadWaitMs = 200;
+
     const int mtu_size = this->MtuSize();
     const auto callback = this->GetRecvIPPacketCallback();
     const bool rate_calc = this->UsingRateCalculator();
@@ -279,7 +284,11 @@ class GenericTunInterface final
           }
         }
       } else {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // Раньше здесь стоял sleep_for(1ms). Дескриптор неблокирующий, поэтому
+        // в простое это давало около 2000 системных вызовов в секунду, а на
+        // нагрузке гранулярность 1 мс ограничивала пропускную способность.
+        // Теперь ждём готовности дескриптора и просыпаемся только по событию.
+        device_.WaitForReadable(kReadWaitMs);
       }
     }
   }

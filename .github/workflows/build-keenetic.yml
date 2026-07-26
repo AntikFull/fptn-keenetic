@@ -26,6 +26,7 @@ jobs:
             apt-packages: gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
             cc: aarch64-linux-gnu-gcc
             cxx: aarch64-linux-gnu-g++
+            strip: aarch64-linux-gnu-strip
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv8-a", "-mno-outline-atomics"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv8-a"
             linkflags: '[]'
@@ -34,6 +35,7 @@ jobs:
             apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
             cc: arm-linux-gnueabihf-gcc
             cxx: arm-linux-gnueabihf-g++
+            strip: arm-linux-gnueabihf-strip
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
             linkflags: '[]'
@@ -42,6 +44,7 @@ jobs:
             apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
             cc: mipsel-linux-gnu-gcc
             cxx: mipsel-linux-gnu-g++
+            strip: mipsel-linux-gnu-strip
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2", "-fcoroutines"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
             linkflags: '[]'
@@ -109,21 +112,40 @@ jobs:
             cat src/fptn-client/CMakeFiles/fptn-client-cli.dir/link.txt || true
             exit 1
           fi
+          if ! cmake --build . --config Release --target fptn-passwd -j$(nproc) -- VERBOSE=1; then
+            echo "=== fptn-passwd build failed ==="
+            exit 1
+          fi
 
       - name: Prepare Named Binary Asset
         run: |
           cp build/src/fptn-client/fptn-client-cli fptn-client-cli-${{ matrix.arch-name }}
+          cp build/src/fptn-passwd/fptn-passwd fptn-passwd-${{ matrix.arch-name }}
+          # Убираем отладочную информацию
+          ls -lh fptn-client-cli-${{ matrix.arch-name }} fptn-passwd-${{ matrix.arch-name }}
+          ${{ matrix.strip }} --strip-unneeded fptn-client-cli-${{ matrix.arch-name }}
+          ${{ matrix.strip }} --strip-unneeded fptn-passwd-${{ matrix.arch-name }}
+          ls -lh fptn-client-cli-${{ matrix.arch-name }} fptn-passwd-${{ matrix.arch-name }}
+          file fptn-client-cli-${{ matrix.arch-name }} fptn-passwd-${{ matrix.arch-name }}
 
-      - name: Upload Build Artifact
+      - name: Upload Build Artifact (Client)
         uses: actions/upload-artifact@v4
         with:
           name: fptn-client-cli-${{ matrix.arch-name }}
           path: fptn-client-cli-${{ matrix.arch-name }}
 
+      - name: Upload Build Artifact (Passwd)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fptn-passwd-${{ matrix.arch-name }}
+          path: fptn-passwd-${{ matrix.arch-name }}
+
       - name: Upload Binary Asset to GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         uses: softprops/action-gh-release@v1
         with:
-          files: fptn-client-cli-${{ matrix.arch-name }}
+          files: |
+            fptn-client-cli-${{ matrix.arch-name }}
+            fptn-passwd-${{ matrix.arch-name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

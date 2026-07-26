@@ -137,6 +137,17 @@ class WinTunDevice {
     return 0;
   }
 
+  // Read выше уже ждёт события Wintun, поэтому возврат 0 означает остановку или
+  // ошибку. Небольшая пауза не даёт читателю уйти в плотный цикл в этом случае.
+  bool WaitForReadable(int timeout_ms) {
+    if (!session_) {
+      Sleep(static_cast<DWORD>(timeout_ms > 0 ? timeout_ms : 0));
+      return false;
+    }
+    return WaitForSingleObject(WintunGetReadWaitEvent(session_),
+               static_cast<DWORD>(timeout_ms)) == WAIT_OBJECT_0;
+  }
+
   int Write(const void* data, int size) {
     if (!session_ || !data || size <= 0) {
       return 0;

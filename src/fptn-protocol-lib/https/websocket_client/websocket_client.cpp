@@ -116,10 +116,19 @@ void WebsocketClient::Run() {
       },
       boost::asio::detached);
   try {
+    // Блокирующая обработка событий. Прежний вариант вызывал неблокирующий
+    // ioc_.poll_one() в цикле с задержкой 1 мс, то есть примерно 2000 системных
+    // вызовов в секунду даже при полном простое туннеля — на процессоре роутера
+    // это был основной постоянный потребитель CPU.
+    // run_one() блокируется до появления события и возвращает 0 только тогда,
+    // когда работы больше нет и появиться она не может, то есть сессия
+    // завершена, а также после ioc_.stop() из Stop().
     while (running_ || !was_stopped_) {
-      const std::size_t processed = ioc_.poll_one();
-      if (processed == 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      if (ioc_.stopped()) {
+        break;
+      }
+      if (ioc_.run_one() == 0) {
+        break;
       }
     }
   } catch (...) {
@@ -243,6 +252,15 @@ bool WebsocketClient::Stop() {
   }
 
   was_stopped_ = true;
+
+  // Разблокируем Run(): он ждёт события в ioc_.run_one() и без этого вызова
+  // остался бы заблокированным, если у io_context ещё есть отложенная работа.
+  try {
+    ioc_.stop();
+  } catch (...) {
+    SPDLOG_WARN("Unknown exception while stopping io_context");
+  }
+
   SPDLOG_INFO("WebSocket client stopped successfully");
 
   return true;

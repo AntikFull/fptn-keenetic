@@ -6,6 +6,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 
 #include "vpn/http/client.h"
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -173,8 +174,16 @@ bool Client::Send(fptn::common::network::IPPacketPtr packet) const {
 void Client::Run() {
   // Time window for counting attempts (1 minute)
   constexpr auto kReconnectionWindow = std::chrono::seconds(120);
-  // Delay between reconnection attempts
-  constexpr auto kReconnectionDelay = std::chrono::milliseconds(300);
+  // Задержка между попытками растёт по экспоненте. Прежние постоянные 300 мс
+  // означали до 35 TLS-рукопожатий за десять секунд: на процессоре роутера это
+  // всплеск нагрузки, который сам же и мешал соединению восстановиться.
+  constexpr auto kMinReconnectionDelay = std::chrono::milliseconds(500);
+  constexpr auto kMaxReconnectionDelay = std::chrono::milliseconds(30000);
+  // Шаг ожидания: спим короткими интервалами, иначе Stop() ждал бы окончания
+  // всей задержки, прежде чем поток завершится.
+  constexpr auto kSleepQuantum = std::chrono::milliseconds(100);
+
+  auto reconnection_delay = kMinReconnectionDelay;
 
   // Current count of reconnection attempts
   reconnection_attempts_ = kMaxReconnectionAttempts_;
@@ -219,6 +228,7 @@ void Client::Run() {
       SPDLOG_INFO("Reconnection window reset. New attempt window started");
       reconnection_attempts_ = kMaxReconnectionAttempts_;
       window_start_time = current_time;
+      reconnection_delay = kMinReconnectionDelay;
     }
     if (reconnection_attempts_ > 0) {
       --reconnection_attempts_;
@@ -228,9 +238,14 @@ void Client::Run() {
         "Connection closed (attempt {}/{} in current window). Reconnecting in "
         "{}ms...",
         kMaxReconnectionAttempts_ - reconnection_attempts_,
-        kMaxReconnectionAttempts_, kReconnectionDelay.count());
+        kMaxReconnectionAttempts_, reconnection_delay.count());
 
-    std::this_thread::sleep_for(kReconnectionDelay);
+    for (auto slept = std::chrono::milliseconds(0);
+        running_ && slept < reconnection_delay; slept += kSleepQuantum) {
+      std::this_thread::sleep_for(kSleepQuantum);
+    }
+    reconnection_delay =
+        std::min(reconnection_delay * 2, kMaxReconnectionDelay);
   }
 
   if (running_ && !reconnection_attempts_) {

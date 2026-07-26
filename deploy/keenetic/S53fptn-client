@@ -20,7 +20,17 @@ if [ -z "$TOKEN" ]; then
 fi
 
 IFNAME="${TUN_INTERFACE:-opkgtun1}"
-ARGS="--access-token ${TOKEN} --tun-interface-name ${IFNAME} --disable-routing"
+MTU="${TUN_MTU:-1360}"
+
+# Логи пишем на накопитель Entware, а не в /var/log (это tmpfs, т.е. ОЗУ роутера)
+FPTN_LOG_DIR="${FPTN_LOG_DIR:-/opt/var/log/fptn}"
+FPTN_LOG_MAX_SIZE_MB="${FPTN_LOG_MAX_SIZE_MB:-1}"
+FPTN_LOG_MAX_FILES="${FPTN_LOG_MAX_FILES:-2}"
+export FPTN_LOG_DIR FPTN_LOG_MAX_SIZE_MB FPTN_LOG_MAX_FILES
+mkdir -p "$FPTN_LOG_DIR" 2>/dev/null || true
+
+# MTU задаёт сам клиент, чтобы у интерфейса был единственный владелец настроек
+ARGS="--access-token ${TOKEN} --tun-interface-name ${IFNAME} --mtu-size ${MTU} --disable-routing"
 
 if [ -n "$PREFERRED_SERVER" ]; then
     FIRST_SERVER=$(echo "$PREFERRED_SERVER" | cut -d',' -f1 | tr -d ' ')
@@ -46,9 +56,38 @@ if [ -n "$PREFERRED_SERVER" ]; then
 fi
 
 KTUN=$(echo "$IFNAME" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
+
+# Прежние версии этого скрипта добавляли правила через "iptables -I" при каждом
+# запуске и никогда их не удаляли, поэтому у существующих установок цепочки
+# заполнены дубликатами. Вычищаем их один раз перед стартом.
+# NAT и подгонку MSS дальше выполняет сам ndm (см. "ip tcp adjust-mss pmtu").
+cleanup_legacy_iptables() {
+    _iter=0
+    while [ "$_iter" -lt 20 ]; do
+        _removed=0
+        iptables -t nat -D POSTROUTING -o "${IFNAME}" -j MASQUERADE 2>/dev/null && _removed=1
+        iptables -D FORWARD -o "${IFNAME}" -j ACCEPT 2>/dev/null && _removed=1
+        iptables -D FORWARD -i "${IFNAME}" -j ACCEPT 2>/dev/null && _removed=1
+        iptables -t mangle -D POSTROUTING -o "${IFNAME}" -p tcp \
+            --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null && _removed=1
+        [ "$_removed" = "0" ] && break
+        _iter=$((_iter + 1))
+    done
+    return 0
+}
+
+# Вызываем напрямую, а не через PRECMD: разные версии Entware rc.func трактуют
+# PRECMD по-разному (где-то как отдельную команду, где-то как префикс запуска).
+case "$1" in
+    start|restart) cleanup_legacy_iptables ;;
+esac
+
+# Адрес и MTU туннеля назначает сам клиент (10.0.0.1/32, см. --mtu-size выше).
+# Здесь остаётся только то, чего клиент не делает: приоритет интерфейса для ndm
+# и access-list, который KeeneticOS удаляет автоматически при простое.
 PRECMD=""
 PREARGS=""
-POSTCMD="ip addr flush dev ${IFNAME} 2>/dev/null || true; ndmc -c 'interface ${KTUN} ip address 10.0.0.1 255.255.255.255' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip global 50000' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip mtu 1360' >/dev/null 2>&1; ndmc -c 'access-list _WEBADMIN_${KTUN} permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip access-group _WEBADMIN_${KTUN} in' >/dev/null 2>&1; ndmc -c 'access-list _WEBADMIN_${KTUN} auto-delete' >/dev/null 2>&1; ip link set dev ${IFNAME} mtu 1360 2>/dev/null || true; ip link set dev ${IFNAME} up 2>/dev/null || true; ip addr add 10.0.0.1/8 dev ${IFNAME} 2>/dev/null || true; iptables -t nat -I POSTROUTING 1 -o ${IFNAME} -j MASQUERADE 2>/dev/null || true; iptables -I FORWARD 1 -o ${IFNAME} -j ACCEPT 2>/dev/null || true; iptables -I FORWARD 1 -i ${IFNAME} -j ACCEPT 2>/dev/null || true; iptables -t mangle -I POSTROUTING 1 -o ${IFNAME} -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true"
+POSTCMD="ndmc -c 'interface ${KTUN} ip global 50000' >/dev/null 2>&1; ndmc -c 'access-list _WEBADMIN_${KTUN} permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip access-group _WEBADMIN_${KTUN} in' >/dev/null 2>&1; ndmc -c 'access-list _WEBADMIN_${KTUN} auto-delete' >/dev/null 2>&1; true"
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 . /opt/etc/init.d/rc.func

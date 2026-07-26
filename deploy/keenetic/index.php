@@ -1181,6 +1181,9 @@ if (!empty($config['TOKEN'])) {
         }
 
         async function fetchRealtimeStatus() {
+            // Не опрашиваем роутер, пока вкладка скрыта: открытая в фоне панель
+            // иначе создаёт постоянную нагрузку на процессор роутера.
+            if (document.hidden) return;
             try {
                 const res = await fetch('?ajax=get_status');
                 if (!res.ok) return;
@@ -1214,7 +1217,12 @@ if (!empty($config['TOKEN'])) {
                 }
             } catch (e) {}
         }
-        setInterval(fetchRealtimeStatus, 3000);
+        // 10 секунд вместо 3: каждый опрос стоит роутеру запуска php-cgi
+        setInterval(fetchRealtimeStatus, 10000);
+        // При возврате на вкладку обновляем статус сразу, не дожидаясь таймера
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) fetchRealtimeStatus();
+        });
         document.addEventListener('DOMContentLoaded', () => {
             renderPriorityList();
             setTimeout(checkServerPings, 300);
@@ -1617,37 +1625,9 @@ if (!empty($config['TOKEN'])) {
                 });
         }
 
-        // Автоматический мониторинг статуса службы каждые 5 секунд
-        setInterval(() => {
-            fetch('?ajax=get_status')
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        const badge = document.getElementById('service-status-badge');
-                        const text = document.getElementById('service-status-text');
-                        const pidVal = document.getElementById('service-pid-val');
-                        const ifaceStatus = document.getElementById('iface-status-val');
-                        const ifaceIp = document.getElementById('iface-ip-val');
-
-                        if (badge && text) {
-                            if (data.service_running) {
-                                badge.className = 'status-badge active';
-                                text.textContent = 'Служба работает';
-                            } else {
-                                badge.className = 'status-badge inactive';
-                                text.textContent = 'Служба остановлена';
-                            }
-                        }
-                        if (pidVal) pidVal.textContent = data.pid;
-                        if (ifaceStatus) {
-                            ifaceStatus.textContent = data.interface_status;
-                            ifaceStatus.style.color = data.interface_status === 'Активен' ? 'var(--accent-green)' : 'var(--text-muted)';
-                        }
-                        if (ifaceIp) ifaceIp.textContent = data.interface_ip;
-                    }
-                })
-                .catch(() => {});
-        }, 5000);
+        // Второй таймер опроса статуса удалён: он дублировал fetchRealtimeStatus
+        // и обновлял те же самые элементы. Вместе они давали 32 запроса в минуту,
+        // каждый из которых порождал процесс php-cgi, два pgrep и вызов ip addr.
     </script>
 </body>
 </html>

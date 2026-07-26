@@ -83,3 +83,39 @@ Icon
 Network Trash Folder
 Temporary Items
 .apdisk
+
+# Conan generated files in root
+*release-x86_64*.cmake
+*Config.cmake
+*ConfigVersion.cmake
+*Targets.cmake
+Find*.cmake
+conan_toolchain.cmake
+cmakedeps_macros.cmake
+conanbuild.bat
+conanbuildenv-release-x86_64.bat
+conandeps_legacy.cmake
+conanrun.bat
+conanrunenv-release-x86_64.bat
+deactivate_conanbuild.bat
+deactivate_conanrun.bat
+fptn-client-cli
+build_src.tar.gz
+*-Target-release.cmake
+*-config-version.cmake
+
+# Presets and local scripts
+CMakePresets.json
+CMakeUserPresets.json
+build-local.sh
+
+# Reports and scripts
+release_v1.1.*_report.txt
+test_*.php
+update_conf.py
+router_fptn_client.conf
+.gitattributes
+HANDOFF-ANTIGRAVITY.md
+OPTIMIZATION_PLAN.md
+
+

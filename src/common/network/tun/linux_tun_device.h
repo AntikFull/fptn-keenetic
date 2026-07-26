@@ -19,6 +19,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <arpa/inet.h>
 #include <net/if.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -106,6 +107,23 @@ class LinuxTunDevice {
 
   int Read(void* buffer, int size) {
     return tun_->read(buffer, static_cast<std::size_t>(size));
+  }
+
+  // Ожидание готовности дескриптора к чтению. Позволяет читателю блокироваться
+  // на событии вместо опроса неблокирующего дескриптора в цикле с задержкой.
+  bool WaitForReadable(int timeout_ms) {
+#if defined(__linux__)
+    if (!tun_) {
+      return false;
+    }
+    struct pollfd pfd = {};
+    pfd.fd = tun_->native_handle();
+    pfd.events = POLLIN;
+    return ::poll(&pfd, 1, timeout_ms) > 0 && (pfd.revents & POLLIN) != 0;
+#else
+    (void)timeout_ms;
+    return false;
+#endif
   }
 
   int Write(const void* data, int size) {

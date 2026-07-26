@@ -10,33 +10,67 @@
 - **Python 3.x** и **Conan**: `pip install conan`.
 - **CMake**: `winget install kitware.cmake`.
 
-### 2. Кросс-компиляция для Keenetic (ARM/MIPS) через WSL 2 (Ubuntu)
-Так как для роутеров нужен Linux-компилятор, кросс-компиляцию удобнее всего запускать в WSL Ubuntu:
-1. Запустите консоль Ubuntu в WSL: `wsl`
-2. Установите зависимости в WSL:
-   ```bash
-   sudo apt update
-   sudo apt install -y build-essential cmake ninja-build pkg-config gcc-aarch64-linux-gnu g++-aarch64-linux-gnu python3-pip
-   pip3 install conan --break-system-packages
-   ```
-3. Перейдите в папку проекта в WSL:
-   ```bash
-   cd /mnt/f/Antigravity/testovoe/fptn-master/fptn-keenetic-master
-   ```
-4. Инициализируйте профиль Conan:
-   ```bash
-   conan profile detect --force
-   ```
-5. Установите Conan-зависимости под x86_64 Linux (для проверки синтаксиса и сборки):
-   ```bash
-   conan install . --output-folder=build --build=missing -s compiler.cppstd=17 -o with_gui_client=False --settings build_type=Release
-   ```
-6. Перейдите в папку `build` и соберите проект:
-   ```bash
-   cd build
-   cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
-   cmake --build . --config Release
-   ```
+### 2. Сборка бинарника для Keenetic (ARM/MIPS)
+
+> ⚠️ **Основной способ — GitHub Actions, а не локальная сборка.**
+> В репозитории уже есть готовый рецепт `.github/workflows/build-keenetic.yml`, который собирает `fptn-client-cli` сразу под три архитектуры (`aarch64`, `armv7`, `mipsel`) со статической линковкой и кэшем Conan. Локальная кросс-сборка тех же зависимостей (boost 1.90, protobuf 5.29, mimalloc — всё из исходников под чужую архитектуру) занимает часы и легко расходится с тем, что уходит в релиз.
+
+**Запуск сборки:**
+- Вручную: вкладка Actions → workflow «Build FPTN Client for Keenetic» → Run workflow (событие `workflow_dispatch` уже настроено).
+- Автоматически: любой push в `master`/`main`, а при push тега бинарники дополнительно прикрепляются к GitHub Release.
+
+Готовые бинарники забираются из артефактов сборки (`fptn-client-cli-aarch64` и т.д.) и кладутся в `deploy/keenetic/bin/`. Начиная с текущей версии workflow прогоняет их через `strip --strip-unneeded`: раньше в релиз уходил бинарник с отладочной информацией на ~50 МБ.
+
+**Локальная кросс-сборка (только если Actions недоступен).** Профиль обязан совпадать с CI, иначе результат будет отличаться от релизного. Точные значения флагов — в матрице `build-keenetic.yml`; ниже пример для `aarch64`:
+```bash
+wsl
+sudo apt update
+sudo apt install -y build-essential cmake ninja-build pkg-config gcc-aarch64-linux-gnu g++-aarch64-linux-gnu python3-pip
+pip3 install conan --break-system-packages
+cd /mnt/f/Antigravity/testovoe/fptn-master/fptn-keenetic-master
+conan profile detect --force
+
+# Профиль кросс-компиляции — копия того, что делает CI
+echo 'set(MI_NO_OPT_ARCH ON CACHE BOOL "" FORCE)'  > ~/.conan2/profiles/global_user_toolchain.cmake
+echo 'set(MI_OPT_ARCH OFF CACHE BOOL "" FORCE)'   >> ~/.conan2/profiles/global_user_toolchain.cmake
+cat > ~/.conan2/profiles/aarch64_cross << 'EOF'
+[settings]
+os=Linux
+arch=armv8
+compiler=gcc
+compiler.version=11
+compiler.libcxx=libstdc++11
+compiler.cppstd=gnu17
+build_type=Release
+
+[buildenv]
+ASFLAGS=-DOPENSSL_PTHREADS -pthread -march=armv8-a
+
+[conf]
+tools.build:compiler_executables={"c": "aarch64-linux-gnu-gcc", "cpp": "aarch64-linux-gnu-g++"}
+tools.build:cflags=["-DOPENSSL_PTHREADS", "-pthread", "-march=armv8-a", "-mno-outline-atomics"]
+tools.build:cxxflags=["-DOPENSSL_PTHREADS", "-pthread", "-march=armv8-a", "-mno-outline-atomics"]
+tools.cmake.cmaketoolchain:user_toolchain=["$HOME/.conan2/profiles/global_user_toolchain.cmake"]
+EOF
+
+conan install . --output-folder=build --build=missing -pr:h=aarch64_cross -pr:b=default
+cd build
+cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-static"
+cmake --build . --config Release --target fptn-client-cli -j$(nproc)
+aarch64-linux-gnu-strip --strip-unneeded src/fptn-client/fptn-client-cli
+file src/fptn-client/fptn-client-cli   # должно быть: ARM aarch64, statically linked, stripped
+```
+
+### 2a. Быстрая проверка компиляции под x86_64 Linux
+Роутерный бинарник этим **не** получить — это только проверка, что код собирается:
+```bash
+conan install . --output-folder=build-x86 --build=missing -s compiler.cppstd=17 -o with_gui_client=False --settings build_type=Release
+cd build-x86
+cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build . --config Release --target fptn-client-cli -j$(nproc)
+```
+
+> ⚠️ `fptn-passwd` в `build-keenetic.yml` не собирается — workflow делает только цель `fptn-client-cli`. Поэтому лежащий в репозитории `deploy/keenetic/bin/fptn-passwd-aarch64` фактически собран под x86-64 (проверяется командой `file`) и на роутере не запустится. Если он нужен, добавьте цель в workflow, а не собирайте вручную.
 
 ### 3. Выпуск нового релиза (Правило для ИИ и разработчика)
 При выпуске новой версии FPTN Keenetic **ОБЯЗАТЕЛЬНО** обновите версию в следующих файлах:
@@ -101,7 +135,68 @@
 - **Очистка iptables:** Удалены жесткие вызовы `MASQUERADE` и `TCPMSS`, передав управление NAT роутера демону KeeneticOS `ndm`.
 - **Синтаксис и форматирование:** Все shell-скрипты проверены утилитой `sh -n` и приведены к формату UNIX LF.
 
+> ⚠️ **Пробел в журнале:** релизы с `v1.0.7` по `v1.1.22` не задокументированы. Именно из-за этого осталась незамеченной регрессия: удалённые в v1.0.6 вызовы `MASQUERADE` и `TCPMSS` вернулись в `S53fptn-client` и накапливались дубликатами при каждом перезапуске. При выпуске релиза журнал заполнять обязательно.
 
+---
+
+## 📝 Журнал: устранение нагрузки на процессор и зависаний (не выпущено, `v1.1.22` + правки)
+
+Полный разбор причин и порядок проверки — в `OPTIMIZATION_PLAN.md`.
+Причиной зависаний оказались не одна ошибка, а пять независимых, складывающихся.
+
+### 1. 🔥 Устранён busy-spin в C++ (основной постоянный расход CPU)
+- **`websocket_client.cpp`:** цикл `ioc_.poll_one()` + `sleep_for(1ms)` заменён на блокирующий `ioc_.run_one()`. Прежний вариант давал около 2000 системных вызовов в секунду даже при полном простое туннеля. В `Stop()` добавлен `ioc_.stop()`, чтобы разблокировать `Run()`.
+- **`net_interface.h` / `linux_tun_device.h` / `darwin_tun_device.h` / `win_tun_device.h`:** в `RunReader()` вместо `sleep_for(1ms)` на неблокирующем дескрипторе добавлен метод `WaitForReadable(timeout_ms)` — ожидание события через `poll()` (на Windows — через событие Wintun). Кроме расхода CPU это убирает ограничение пропускной способности гранулярностью 1 мс.
+
+### 2. 💾 Логи убраны из оперативной памяти роутера
+- **`logger.h`:** каталог логов переопределяется через `FPTN_LOG_DIR`, размер ротации — через `FPTN_LOG_MAX_SIZE_MB` и `FPTN_LOG_MAX_FILES`. Раньше путь был жёстко задан как `/var/log/fptn/` с ротацией 12 МБ × 3, а на KeeneticOS `/var` — это tmpfs, то есть до 36 МБ логов в ОЗУ роутера и прямой путь к нехватке памяти.
+- `flush_on(debug)` заменён на `flush_on(err)`: сброс буфера на каждой строке дорог для флеш-накопителя.
+- **`S53fptn-client`:** экспортирует `FPTN_LOG_DIR=/opt/var/log/fptn` и ротацию 1 МБ × 2; каталог создаётся в `install.sh`.
+
+### 3. 🌐 Устранён конфликт адресации туннеля («шторм» демона `ndm`)
+- Установлен единственный владелец настроек интерфейса — сам клиент. Он назначает `10.0.0.1/32` (`FPTN_CLIENT_DEFAULT_ADDRESS_IP4`), MTU передаётся ему через `--mtu-size 1360`.
+- **`install.sh`:** удалён повторный блок настройки, который поверх уже заданного `10.0.0.1/255.255.255.255` назначал `172.20.0.2/255.255.0.0` и `ip defaultgateway 172.20.0.1` — шлюз, которого не существует. Три разных адреса с разными масками на одном интерфейсе заставляли `ndm` непрерывно сверять свою конфигурацию с ядром.
+- **`S53fptn-client`:** из `POSTCMD` убраны `ip addr flush`, `ndmc ... ip address`, `ip addr add 10.0.0.1/8`, `ip link set mtu/up`. Осталось только то, чего клиент не делает: `ip global 50000` и access-list (KeeneticOS удаляет его по `auto-delete`).
+
+### 4. 🧹 Прекращено накопление правил iptables
+- Из `POSTCMD` удалены 4 правила `iptables -I` (`MASQUERADE`, два `FORWARD`, `TCPMSS`): они добавлялись при каждом запуске и никогда не удалялись, поэтому цепочки росли неограниченно. NAT отдан `ndm`, подгонка MSS — через `ndmc ... ip tcp adjust-mss pmtu` в `install.sh`. Это возврат к решению, принятому в v1.0.6.
+- Добавлена функция `cleanup_legacy_iptables`, которая при `start`/`restart` вычищает дубликаты, оставленные прежними версиями. Вызывается напрямую, а не через `PRECMD`, поскольку разные версии Entware `rc.func` трактуют `PRECMD` по-разному.
+
+### 5. ⚙️ Снижена фоновая нагрузка watchdog и веб-панели
+- **`index.php`:** удалён второй таймер `setInterval`, дублировавший `fetchRealtimeStatus` (оба обновляли одни и те же элементы, вместе — 32 запроса в минуту, каждый со запуском `php-cgi`, двумя `pgrep` и `ip addr`). У оставшегося интервал поднят с 3 до 10 секунд, опрос останавливается при `document.hidden`.
+- **`install.sh`:** cron watchdog переведён с `*/1` на `*/5`, старая запись удаляется при обновлении.
+- **`fptn-watchdog.sh`:** `ping -c 2` → `ping -c 1` (было до 4 секунд на запуск). Исправлен путь к логу клиента: скрипт читал несуществующий `/opt/var/log/fptn-client.log`, из-за чего автовозврат на приоритетный сервер (failback) не срабатывал никогда.
+
+### 6. 🚦 Ограничен параллелизм подбора сервера и добавлен backoff
+- **`speed_estimator.cpp`:** `FindFastestServer` и `FindServerByLogin` запускали по потоку на каждый сервер — до десяти одновременных TLS-рукопожатий при каждом старте, причём потоки были `detach`-нутыми и продолжали работу после получения результата. Введён пул из `kMaxProbeConcurrency = 2` воркеров, разбирающих серверы по очереди, с флагом `done` для прекращения работы сразу после результата.
+- **`client.cpp`:** постоянная задержка переподключения 300 мс (35 попыток, то есть 35 TLS-рукопожатий за 10 секунд) заменена на экспоненциальный backoff 500 мс → 30 с. Ожидание разбито на кванты по 100 мс, чтобы `Stop()` не ждал окончания всей задержки.
+
+### 7. 📋 Гигиена репозитория
+- Добавлен `.gitattributes`. Рабочая копия на Windows была в CRLF, а индекс в LF, поэтому `git diff` показывал изменёнными все 134 файла и ревью правок было невозможно. Отдельно закреплён LF для скриптов роутера: они скачиваются из репозитория и выполняются `/bin/sh`, который на CRLF выдаёт `not found`.
+
+### ✅ Что проверено, а что нет
+
+**Shell и PHP:**
+- `sh -n` для всех скриптов; функциональный прогон `S53fptn-client` с заглушками `iptables`/`ndmc`/`rc.func`: подтверждено, что адрес не назначается, 12 дубликатов iptables вычищаются за 3 итерации, на пустой цепочке цикл не зависает, при `stop` очистка не запускается, аргументы CLI корректны (`--mtu-size 1360 --disable-routing`).
+- Идемпотентность правки crontab: повторный запуск установщика оставляет одну запись.
+- В `index.php` остался ровно один таймер опроса статуса.
+
+**C++ (компиляция реальных файлов с заглушками внешних библиотек, сигнатуры заглушек скопированы с настоящих объявлений):**
+- `speed_estimator.cpp` — компилируется чисто с `-Wall -Wextra` (самое большое изменение, 127 строк).
+- `logger.h` — компилируется чисто.
+- `linux_tun_device.h` вместе с новым `WaitForReadable` — компилируется чисто.
+- Изменённый цикл `WebsocketClient::Run()` и вставка в `Stop()` — проверены на минимальной заглушке `io_context`.
+- Сигнатуры `WaitForReadable(int)` во всех трёх платформенных устройствах идентичны (`GenericTunInterface` — шаблон, метод проверяется при инстанцировании).
+- Логика правок отдельными тестами на `g++`, 18 проверок: разбор переменных окружения (мусор/ноль/пусто → значение по умолчанию), пул воркеров держит параллелизм ≤2 вместо 10 и не опрашивает лишние серверы после успеха, backoff 500мс→30с с ограничением сверху, сон прерывается за 300 мс вместо 30 с, `poll()` просыпается по событию за 30 мс вместо ожидания таймаута.
+
+**Не проверено:**
+- **Полная сборка проекта.** В песочнице нет сети (прокси отдаёт 403 на pypi, conan center, github, archive.ubuntu.com) и прав root, поэтому conan и boost недоступны. Кэш Conan лежит в `C:/Users/DimaPC/.conan2/` — вне смонтированных папок. Не скомпилированы в контексте проекта: `net_interface.h`, `client.cpp`, `websocket_client.cpp` (все требуют boost).
+- **Допущение о семантике `run_one()`**, на котором держится главное исправление: возврат `0` означает «io_context остановлен или работы больше нет». Соответствует документации Boost.Asio, но на настоящем boost не проверено. При сборке убедиться, что после разрыва соединения клиент переподключается — в логе должно появиться `Connection closed (attempt N/35...)`.
+- **Поведение на живом роутере.** Перед выпуском обязательны замеры из `OPTIMIZATION_PLAN.md`, этап 0.
+
+Версии в `version.txt`, `index.php`, `install.sh`, `README.md` **не поднимались**: правки не выпускались как релиз.
+
+---
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 

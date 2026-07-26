@@ -312,8 +312,13 @@ else
     
     ndmc -c "interface $USER_KTUN description Fptn" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN security-level public" 2>/dev/null || true
+    # Адрес и маска должны в точности совпадать с тем, что назначает сам клиент
+    # (FPTN_CLIENT_DEFAULT_ADDRESS_IP4 = 10.0.0.1, маска /32). При расхождении ndm
+    # уходит в цикл переконфигурации интерфейса и начинает грузить процессор.
     ndmc -c "interface $USER_KTUN ip address 10.0.0.1 255.255.255.255" 2>/dev/null || true
+    ndmc -c "interface $USER_KTUN ip mtu 1360" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN ip global 50000" 2>/dev/null || true
+    # Подгонку MSS выполняет ndm; правила iptables TCPMSS для этого не нужны
     ndmc -c "interface $USER_KTUN ip tcp adjust-mss pmtu" 2>/dev/null || true
     ndmc -c "access-list _WEBADMIN_$USER_KTUN permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN ip access-group _WEBADMIN_$USER_KTUN in" 2>/dev/null || true
@@ -412,17 +417,13 @@ WEB_PASSWORD="${CONF_PASS}"
 EOF
 chmod 600 "$CONF_PATH"
 
-if which ndmc >/dev/null 2>&1; then
-    KTUN=$(echo "$USER_LTUN" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
-    ndmc -c "interface ${KTUN} description FPTN-Client" >/dev/null 2>&1 || true
-    ndmc -c "interface ${KTUN} security-level public" >/dev/null 2>&1 || true
-    ndmc -c "interface ${KTUN} ip address 172.20.0.2 255.255.0.0" >/dev/null 2>&1 || true
-    ndmc -c "interface ${KTUN} ip mtu 1360" >/dev/null 2>&1 || true
-    ndmc -c "interface ${KTUN} ip defaultgateway 172.20.0.1" >/dev/null 2>&1 || true
-    ndmc -c "interface ${KTUN} ip global 50000" >/dev/null 2>&1 || true
-    ndmc -c "interface ${KTUN} up" >/dev/null 2>&1 || true
-    ndmc -c "system configuration save" >/dev/null 2>&1 || true
-fi
+# Повторная настройка интерфейса здесь удалена намеренно.
+# Ранее этот блок назначал 172.20.0.2/255.255.0.0 и ip defaultgateway 172.20.0.1
+# поверх уже настроенного выше 10.0.0.1/255.255.255.255. Три разных адреса с
+# разными масками на одном интерфейсе (и шлюз, которого не существует)
+# заставляли ndm непрерывно сверять свою конфигурацию с ядром — отсюда
+# постоянная загрузка процессора, флапающие маршруты и зависание веб-морды.
+# Интерфейс настраивается ровно один раз, в шаге [3/7].
 
 # 9. Установка init-скрипта автозапуска службы / Install Init Script
 echo ""
@@ -452,12 +453,20 @@ fi
 chmod 755 /opt/bin/fptn-watchdog.sh
 sed -i "s/TUN_INTERFACE:-opkgtun[0-9]*/TUN_INTERFACE:-${USER_LTUN}/g" /opt/bin/fptn-watchdog.sh
 
+# Каталог для логов на накопителе. В /var/log писать нельзя: на KeeneticOS это
+# tmpfs, то есть ОЗУ роутера, и ротация логов съедала бы до 36 МБ памяти.
+mkdir -p /opt/var/log/fptn 2>/dev/null || true
+
 CRONTAB="/opt/etc/crontab"
-CRON_JOB="*/1 * * * * root /opt/bin/fptn-watchdog.sh"
+# Раз в 5 минут, а не в минуту: каждый запуск watchdog делает ping и чтение логов,
+# при интервале в минуту это заметный постоянный фон для процессора роутера.
+CRON_JOB="*/5 * * * * root /opt/bin/fptn-watchdog.sh"
 if [ -f "$CRONTAB" ]; then
-    if ! grep -q "fptn-watchdog.sh" "$CRONTAB"; then
-        echo "$CRON_JOB" >> "$CRONTAB"
+    # Убираем запись прежних версий (*/1), чтобы при обновлении не остались обе
+    if grep -q "fptn-watchdog.sh" "$CRONTAB"; then
+        sed -i '/fptn-watchdog\.sh/d' "$CRONTAB"
     fi
+    echo "$CRON_JOB" >> "$CRONTAB"
 else
     cat << EOF > "$CRONTAB"
 SHELL=/bin/sh
