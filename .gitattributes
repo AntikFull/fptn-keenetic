@@ -1,0 +1,24 @@
+# Нормализация переводов строк.
+# Без этого файла рабочая копия на Windows содержит CRLF, а в индексе лежит LF,
+# из-за чего "git diff" показывает изменёнными вообще все файлы проекта и
+# осмысленное ревью правок становится невозможным.
+* text=auto eol=lf
+
+# Скрипты для роутера обязаны быть в LF: они скачиваются напрямую из репозитория
+# и выполняются /bin/sh на KeeneticOS, который на CRLF выдаёт "not found".
+*.sh text eol=lf
+deploy/keenetic/S53fptn-client text eol=lf
+deploy/keenetic/S54fptn-server text eol=lf
+deploy/keenetic/*.conf text eol=lf
+
+# Файлы для Windows-окружения
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Бинарные файлы не нормализуем
+*.png binary
+*.jpg binary
+*.ico binary
+*.tar.gz binary
+*.exe binary
+deploy/keenetic/bin/* binary
