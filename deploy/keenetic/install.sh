@@ -194,7 +194,8 @@ elif which ndmc >/dev/null 2>&1; then
         # Сообщение об ошибке ndmc пишет в stderr и при этом возвращает 0,
         # поэтому судить можно только по тексту вывода — и stderr обязательно
         # надо забрать в stdout, иначе проверка ничего не увидит.
-        IF_INFO=$(ndmc -c "show interface $C_KTUN" 2>&1)
+        # Добавляем || true, чтобы при включенном set -e скрипт не падал при ошибке ndmc.
+        IF_INFO=$(ndmc -c "show interface $C_KTUN" 2>&1 || true)
         if [ -z "$IF_INFO" ] || echo "$IF_INFO" | grep -qiE "error|no such|not found"; then
             # Интерфейс свободен
             DEFAULT_KTUN=$C_KTUN
@@ -323,7 +324,8 @@ else
     # ndmc возвращает 0 и для несуществующего интерфейса, а текст ошибки пишет
     # в stderr. Прежняя проверка по коду возврата всегда уходила в ветку «уже
     # существует», и интерфейс не создавался.
-    EXISTING_IF=$(ndmc -c "show interface $USER_KTUN" 2>&1)
+    # Добавляем || true, чтобы при включенном set -e скрипт не падал при ошибке ndmc.
+    EXISTING_IF=$(ndmc -c "show interface $USER_KTUN" 2>&1 || true)
     if [ -n "$EXISTING_IF" ] && ! echo "$EXISTING_IF" | grep -qiE "error|no such|not found"; then
         echo "Интерфейс $USER_KTUN уже существует / Interface $USER_KTUN already exists."
     else
