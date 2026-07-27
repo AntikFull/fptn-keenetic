@@ -126,6 +126,25 @@ class LinuxTunDevice {
 #endif
   }
 
+  // Ожидание готовности дескриптора к записи. Дескриптор неблокирующий, и при
+  // переполненной очереди устройства (или пока интерфейс не поднят) write
+  // возвращает ошибку немедленно — без этого ожидания цикл повторной отправки
+  // упирается в 100% ядра.
+  bool WaitForWritable(int timeout_ms) {
+#if defined(__linux__)
+    if (!tun_) {
+      return false;
+    }
+    struct pollfd pfd = {};
+    pfd.fd = tun_->native_handle();
+    pfd.events = POLLOUT;
+    return ::poll(&pfd, 1, timeout_ms) > 0 && (pfd.revents & POLLOUT) != 0;
+#else
+    (void)timeout_ms;
+    return false;
+#endif
+  }
+
   int Write(const void* data, int size) {
     return tun_->write(const_cast<void*>(data), static_cast<std::size_t>(size));
   }

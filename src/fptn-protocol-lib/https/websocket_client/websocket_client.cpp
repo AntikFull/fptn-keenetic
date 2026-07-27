@@ -22,7 +22,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include "fptn-protocol-lib/https/api_client/api_client.h"
 #include "fptn-protocol-lib/https/obfuscator/methods/tls2/tls_obfuscator2.h"
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || (defined(__linux__) && !defined(__ANDROID__))
 #include <netinet/tcp.h>
 #endif
 
@@ -379,16 +379,32 @@ boost::asio::awaitable<bool> WebsocketClient::Connect() {
     // Darwin-specific TCP keepalive fine-tuning.
     // Kernel probes run during device sleep — no app CPU needed.
     {
-        int fd = socket.native_handle();
-        int keepidle = 15;   // idle seconds before first probe
-        int keepintvl = 5;   // seconds between probes
-        int keepcnt  = 3;    // probe count before declaring dead
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle,
-                   sizeof(keepidle));
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl,
-                   sizeof(keepintvl));
-        setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt,
-                   sizeof(keepcnt));
+      const int fd = socket.native_handle();
+      const int keepidle = 5;   // idle seconds before first probe
+      const int keepintvl = 2;  // seconds between probes
+      const int keepcnt = 3;    // probe count before declaring dead
+      const int rxt_droptime = 10;
+      setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle, sizeof(keepidle));
+      setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+      setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+      setsockopt(fd, IPPROTO_TCP, TCP_RXT_CONNDROPTIME, &rxt_droptime,
+          sizeof(rxt_droptime));
+    }
+#elif defined(__linux__) && !defined(__ANDROID__)
+    // Без этих опций молча оборванное соединение (типовая ситуация за PPPoE и
+    // CGNAT) висит до системного дефолта, а это порядка двух часов. Блок был
+    // потерян при переносе на Keenetic — здесь он нужнее, чем где-либо ещё.
+    {
+      const int fd = socket.native_handle();
+      const int keepidle = 5;
+      const int keepintvl = 2;
+      const int keepcnt = 3;
+      const int user_timeout = 10000;
+      setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+      setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+      setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
+      setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout,
+          sizeof(user_timeout));
     }
 #endif
 
@@ -495,7 +511,7 @@ boost::asio::awaitable<bool> WebsocketClient::Connect() {
     try {
       boost::beast::websocket::stream_base::timeout timeout_option;
       timeout_option.handshake_timeout = std::chrono::seconds(10);
-      timeout_option.idle_timeout = std::chrono::seconds(5);
+      timeout_option.idle_timeout = std::chrono::seconds(15);
       timeout_option.keep_alive_pings = true;
       ws_.set_option(timeout_option);
     } catch (const std::exception& e) {
@@ -593,34 +609,33 @@ boost::asio::awaitable<void> WebsocketClient::RunReader() {
           auto packet =
               fptn::common::network::IPPacket::Parse(std::move(raw_ip_opt));
           if (running_ && packet && config_.new_ip_pkt_callback) {
+            // Получателем всегда становится адрес туннельного интерфейса —
+            // тот же, что назначен ядру. Выданный сервером assigned_ipv4_
+            // используется только как отправитель исходящих (см. RunSender).
+            //
+            // Раньше здесь была развилка: при значении адреса, равном
+            // дефолтному, получателем ставился assigned_ipv4_. На роутере это
+            // ломало NAT — ndm транслирует трафик LAN в адрес интерфейса, и
+            // обратный пакет с чужим получателем conntrack уже не сопоставляет,
+            // то есть ответы не доходят вообще.
             common::network::IPv4Address target_ipv4;
             common::network::IPv6Address target_ipv6;
             {
               const std::lock_guard<std::mutex> lock(mutex_);
-              if (!config_.tun_interface_address_ipv4.IsEmpty() &&
-                  config_.tun_interface_address_ipv4.ToString() != FPTN_CLIENT_DEFAULT_ADDRESS_IP4) {
-                target_ipv4 = config_.tun_interface_address_ipv4;
-              } else {
-                target_ipv4 = assigned_ipv4_;
-              }
-
-              if (!config_.tun_interface_address_ipv6.IsEmpty() &&
-                  config_.tun_interface_address_ipv6.ToString() != FPTN_CLIENT_DEFAULT_ADDRESS_IP6) {
-                target_ipv6 = config_.tun_interface_address_ipv6;
-              } else {
-                target_ipv6 = assigned_ipv6_;
-              }
+              target_ipv4 = config_.tun_interface_address_ipv4;
+              target_ipv6 = config_.tun_interface_address_ipv6;
             }
             // change IP addresses
+            // Пересчёт контрольных сумм выполняют сами сеттеры
+            // (IPPacket::SetDst*Address), отдельный вызов
+            // ComputeCalculateFields() дублировал его на каждом пакете.
             if (packet->IsIPv4()) {
               if (!target_ipv4.IsEmpty()) {
                 packet->SetDstIPv4Address(target_ipv4);
-                packet->ComputeCalculateFields();
               }
             } else if (packet->IsIPv6()) {
               if (!target_ipv6.IsEmpty()) {
                 packet->SetDstIPv6Address(target_ipv6);
-                packet->ComputeCalculateFields();
               }
             } else {
               continue;
@@ -652,10 +667,8 @@ boost::asio::awaitable<void> WebsocketClient::RunSender() {
         // change addresses
         if (packet->IsIPv4()) {
           packet->SetSrcIPv4Address(assigned_ipv4_);
-          packet->ComputeCalculateFields();
         } else if (packet->IsIPv6()) {
           packet->SetSrcIPv6Address(assigned_ipv6_);
-          packet->ComputeCalculateFields();
         } else {
           continue;
         }
@@ -669,10 +682,8 @@ boost::asio::awaitable<void> WebsocketClient::RunSender() {
                   // change IP addresses
                   if (p->IsIPv4()) {
                     p->SetSrcIPv4Address(assigned_ipv4_);
-                    p->ComputeCalculateFields();
                   } else if (p->IsIPv6()) {
                     p->SetSrcIPv6Address(assigned_ipv6_);
-                    p->ComputeCalculateFields();
                   } else {
                     return;
                   }

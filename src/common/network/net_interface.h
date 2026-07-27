@@ -145,6 +145,7 @@ class BaseNetInterface {
  *   void BringUp();
  *   int  Read(void* buffer, int size);
  *   bool WaitForReadable(int timeout_ms);
+ *   bool WaitForWritable(int timeout_ms);
  *   int  Write(const void* data, int size);
  *   void SetStopFlag(const std::atomic<bool>* running);
  *
@@ -294,6 +295,16 @@ class GenericTunInterface final
   }
 
   void RunSender() {
+    // Дескриптор неблокирующий, поэтому неудачная запись возвращается сразу.
+    // Прежний цикл `do { Write } while (bytes != size && running_)` повторял
+    // её без единой паузы: при переполненной очереди устройства или пока
+    // интерфейс не поднят системой это давало 100% одного ядра и не
+    // прекращалось никогда. Теперь между попытками ждём готовности к записи, а
+    // безнадёжный пакет отбрасываем — потеря одного пакета дешевле, чем
+    // остановка пересылки для всех остальных.
+    constexpr int kWriteWaitMs = 50;
+    constexpr int kMaxWriteAttempts = 10;
+
     try {
       constexpr std::chrono::milliseconds kTimeout{100};
       static const bool kRateCalculator = this->UsingRateCalculator();
@@ -306,14 +317,24 @@ class GenericTunInterface final
             // send data
             if (!data.empty() && running_) {
               const int data_size = static_cast<int>(data.size());
-              int bytes_written = 0;
-              do {
-                // resend if error
-                bytes_written = device_.Write(data.data(), data_size);
-                if (bytes_written == data_size && kRateCalculator) {
-                  send_rate_calculator_.Update(bytes_written);
+              for (int attempt = 0; attempt < kMaxWriteAttempts && running_;
+                  ++attempt) {
+                const int bytes_written = device_.Write(data.data(), data_size);
+                if (bytes_written == data_size) {
+                  if (kRateCalculator) {
+                    send_rate_calculator_.Update(bytes_written);
+                  }
+                  break;
                 }
-              } while (bytes_written != data_size && running_);
+                if (attempt + 1 == kMaxWriteAttempts) {
+                  SPDLOG_WARN(
+                      "TUN write failed after {} attempts, dropping packet "
+                      "({} bytes)",
+                      kMaxWriteAttempts, data_size);
+                  break;
+                }
+                device_.WaitForWritable(kWriteWaitMs);
+              }
             }
           }
         }

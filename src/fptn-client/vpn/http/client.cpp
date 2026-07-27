@@ -294,6 +294,11 @@ bool Client::IsStarted() const {
   return running_ && reconnection_attempts_ > 0;
 }
 
+bool Client::IsConnected() const {
+  const std::unique_lock<std::mutex> lock(mutex_);  // mutex
+  return running_ && ws_ && ws_->IsStarted();
+}
+
 void Client::UpdateTunInterfaceAddressIPv4(const IPv4Address& addr) {
   const std::unique_lock<std::mutex> lock(mutex_);
   config_.tun_interface_address_ipv4 = addr;

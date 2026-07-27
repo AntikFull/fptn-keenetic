@@ -44,7 +44,7 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ] || [ "$1" = "uninstall" ]; then
     pkill -9 -f "fptn-watchdog" >/dev/null 2>&1 || true
 
     echo "[2/5] Удаление бинарников и файлов веб-панели / Removing binary & web files..."
-    rm -f /opt/bin/fptn-client-cli /opt/bin/fptn-watchdog.sh /opt/etc/fptn-client.conf /opt/etc/init.d/S53fptn-client /opt/etc/fptn-watchdog.sh /opt/etc/lighttpd/conf.d/85-fptn.conf
+    rm -f /opt/bin/fptn-client-cli /opt/bin/fptn-watchdog.sh /opt/bin/fptn-ndm-setup.sh /opt/etc/fptn-client.conf /opt/etc/init.d/S53fptn-client /opt/etc/fptn-watchdog.sh /opt/etc/lighttpd/conf.d/85-fptn.conf
     rm -rf /opt/share/www/fptn
 
     echo "[3/5] Обновление конфигурации Lighttpd / Updating Lighttpd..."
@@ -53,9 +53,16 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ] || [ "$1" = "uninstall" ]; then
     fi
 
     echo "[4/5] Очистка планировщика Cron / Cleaning Crontab..."
+    # Задание могло быть добавлено и в /opt/etc/crontab, и в пользовательский
+    # spool — разные версии установщика делали по-разному.
     if which crontab >/dev/null 2>&1; then
         (crontab -l 2>/dev/null | grep -v "fptn-watchdog" | crontab - 2>/dev/null) || true
     fi
+    for _f in /opt/etc/crontab /opt/var/spool/cron/crontabs/root /var/spool/cron/crontabs/root; do
+        if [ -f "$_f" ] && grep -q "fptn-watchdog" "$_f"; then
+            sed -i '/fptn-watchdog/d' "$_f"
+        fi
+    done
 
     echo "[5/5] Удаление интерфейса $KTUN_NAME в KeeneticOS / Removing $KTUN_NAME interface..."
     if which ndmc >/dev/null 2>&1; then
@@ -73,7 +80,7 @@ fi
 # Динамическое определение версии релиза из version.txt
 REMOTE_VER=$(curl -sL --connect-timeout 5 "${GITHUB_RAW_BASE}/deploy/keenetic/version.txt" 2>/dev/null | tr -d '\r\n')
 if [ -z "$REMOTE_VER" ]; then
-    REMOTE_VER="v1.2.0-keenetic"
+    REMOTE_VER="v1.3.0-keenetic"
 fi
 
 # Универсальная функция скачивания с каскадом прокси-зеркал / Download helper with mirror fallback
@@ -159,11 +166,18 @@ fi
 # Проверяем наличие уже существующего конфига для сохранения настроек при обновлении
 PREV_TOKEN=""
 PREV_LTUN=""
+PREV_TUN_IP=""
 if [ -f "/opt/etc/fptn-client.conf" ]; then
     . "/opt/etc/fptn-client.conf" 2>/dev/null || true
     PREV_TOKEN="$TOKEN"
     PREV_LTUN="$TUN_INTERFACE"
+    PREV_TUN_IP="$TUN_ADDRESS"
 fi
+
+# Адрес туннеля. Одно значение уходит и клиенту (--tun-interface-ip), и ndm:
+# ndm транслирует в него трафик локальной сети, клиент в него же переписывает
+# получателя входящих пакетов. Разойдутся — обратного трафика не будет.
+USER_TUN_IP="${PREV_TUN_IP:-10.0.0.1}"
 
 # Автоподбор свободного имени туннельного интерфейса в KeeneticOS
 DEFAULT_KTUN="OpkgTun1"
@@ -177,8 +191,11 @@ elif which ndmc >/dev/null 2>&1; then
     while [ "$TUN_IDX" -le 10 ]; do
         C_KTUN="OpkgTun${TUN_IDX}"
         C_LTUN="opkgtun${TUN_IDX}"
-        IF_INFO=$( (ndmc -c "show interface $C_KTUN" 2>/dev/null) || echo "Command error" )
-        if echo "$IF_INFO" | grep -qi "error"; then
+        # Сообщение об ошибке ndmc пишет в stderr и при этом возвращает 0,
+        # поэтому судить можно только по тексту вывода — и stderr обязательно
+        # надо забрать в stdout, иначе проверка ничего не увидит.
+        IF_INFO=$(ndmc -c "show interface $C_KTUN" 2>&1)
+        if [ -z "$IF_INFO" ] || echo "$IF_INFO" | grep -qiE "error|no such|not found"; then
             # Интерфейс свободен
             DEFAULT_KTUN=$C_KTUN
             DEFAULT_LTUN=$C_LTUN
@@ -303,19 +320,24 @@ echo "[3/7] Регистрация интерфейса $USER_KTUN в KeeneticOS
 if ! which ndmc >/dev/null 2>&1; then
     echo "Внимание: Утилита ndmc CLI не найдена / Warning: ndmc CLI not found. Skip interface setup."
 else
-    if (ndmc -c "show interface $USER_KTUN" >/dev/null 2>&1); then
+    # ndmc возвращает 0 и для несуществующего интерфейса, а текст ошибки пишет
+    # в stderr. Прежняя проверка по коду возврата всегда уходила в ветку «уже
+    # существует», и интерфейс не создавался.
+    EXISTING_IF=$(ndmc -c "show interface $USER_KTUN" 2>&1)
+    if [ -n "$EXISTING_IF" ] && ! echo "$EXISTING_IF" | grep -qiE "error|no such|not found"; then
         echo "Интерфейс $USER_KTUN уже существует / Interface $USER_KTUN already exists."
     else
         echo "Создание интерфейса $USER_KTUN типа OpkgTun / Creating OpkgTun interface $USER_KTUN..."
         ndmc -c "interface $USER_KTUN" 2>/dev/null || ndmc -c "interface $USER_KTUN type OpkgTun" 2>/dev/null || true
     fi
-    
+
     ndmc -c "interface $USER_KTUN description Fptn" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN security-level public" 2>/dev/null || true
     # Адрес и маска должны в точности совпадать с тем, что назначает сам клиент
-    # (FPTN_CLIENT_DEFAULT_ADDRESS_IP4 = 10.0.0.1, маска /32). При расхождении ndm
-    # уходит в цикл переконфигурации интерфейса и начинает грузить процессор.
-    ndmc -c "interface $USER_KTUN ip address 10.0.0.1 255.255.255.255" 2>/dev/null || true
+    # (TUN_ADDRESS в fptn-client.conf передаётся ему как --tun-interface-ip,
+    # маска /32). При расхождении ndm уходит в цикл переконфигурации интерфейса,
+    # а conntrack перестаёт сопоставлять обратный трафик.
+    ndmc -c "interface $USER_KTUN ip address $USER_TUN_IP 255.255.255.255" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN ip mtu 1360" 2>/dev/null || true
     ndmc -c "interface $USER_KTUN ip global 50000" 2>/dev/null || true
     # Подгонку MSS выполняет ndm; правила iptables TCPMSS для этого не нужны
@@ -412,6 +434,8 @@ ENABLED="${CONF_ENABLED:-no}"
 TOKEN="$USER_TOKEN"
 PREFERRED_SERVER="${CONF_SERVERS}"
 TUN_INTERFACE="$USER_LTUN"
+# Должно совпадать с адресом, назначенным интерфейсу в KeeneticOS (шаг [3/7]).
+TUN_ADDRESS="$USER_TUN_IP"
 WATCHDOG="${CONF_WATCHDOG:-yes}"
 WEB_PASSWORD="${CONF_PASS}"
 EOF
@@ -438,6 +462,19 @@ else
     fi
 fi
 chmod 755 /opt/etc/init.d/S53fptn-client
+
+# Скрипт донастройки интерфейса в ndm. Вызывается из S53fptn-client как POSTCMD
+# ровно одним словом — см. комментарий там же о том, почему набор команд нельзя
+# писать прямо в POSTCMD.
+if [ -f "$SCRIPT_DIR/fptn-ndm-setup.sh" ]; then
+    cp "$SCRIPT_DIR/fptn-ndm-setup.sh" "/opt/bin/fptn-ndm-setup.sh"
+else
+    if ! download_file "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-ndm-setup.sh" "/opt/bin/fptn-ndm-setup.sh" 30; then
+        echo "Ошибка: Не удалось скачать fptn-ndm-setup.sh / Error: Failed to download fptn-ndm-setup.sh"
+        exit 1
+    fi
+fi
+chmod 755 /opt/bin/fptn-ndm-setup.sh
 
 # 10. Настройка автопинг-наблюдателя (Watchdog) и планировщика задач / Install Watchdog & Cron
 echo ""
@@ -475,6 +512,23 @@ PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
 $CRON_JOB
 EOF
 fi
+
+# Прежние версии установщика добавляли задание через `crontab -`, то есть в
+# пользовательский spool (/opt/var/spool/cron/crontabs/root). Правки только в
+# /opt/etc/crontab его не трогали, и на роутере оставалась старая запись с
+# интервалом */1 — в логе это видно как запуск watchdog каждую минуту.
+# Чистим оба места: здесь задание живёт в /opt/etc/crontab.
+if which crontab >/dev/null 2>&1; then
+    if crontab -l 2>/dev/null | grep -q "fptn-watchdog"; then
+        echo "Удаление старой записи watchdog из пользовательского crontab..."
+        crontab -l 2>/dev/null | grep -v "fptn-watchdog" | crontab - 2>/dev/null || true
+    fi
+fi
+for _spool in /opt/var/spool/cron/crontabs/root /var/spool/cron/crontabs/root; do
+    if [ -f "$_spool" ] && grep -q "fptn-watchdog" "$_spool"; then
+        sed -i '/fptn-watchdog/d' "$_spool"
+    fi
+done
 
 if [ -x "/opt/etc/init.d/S05cron" ]; then
     /opt/etc/init.d/S05cron start >/dev/null 2>&1

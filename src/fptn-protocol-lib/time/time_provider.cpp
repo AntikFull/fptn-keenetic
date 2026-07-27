@@ -49,7 +49,17 @@ std::uint32_t TimeProvider::NowTimestamp() {
   const std::scoped_lock lock(mutex_);  // mutex
 
   const auto now = std::chrono::steady_clock::now();
-  if (now - last_sync_time_.load() > kSyncInterval_) {
+  const auto age = now - last_sync_time_.load();
+  // После неудачной синхронизации повторяем не раньше чем через
+  // kRetryInterval_. Раньше last_sync_time_ обновлялось только при успехе,
+  // поэтому при недоступном NTP (типовая ситуация на роутере, который стартует
+  // до поднятия WAN) условие было истинным всегда — и КАЖДЫЙ вызов
+  // NowTimestamp() уходил в блокирующий запрос ко всем серверам под этим же
+  // мьютексом. А вызывается он из построения TLS-рукопожатия, то есть
+  // многократно на одно соединение.
+  const bool need_refresh =
+      synchronized_ ? (age > kSyncInterval_) : (age > kRetryInterval_);
+  if (need_refresh) {
     Refresh();
   }
 
@@ -75,6 +85,7 @@ bool TimeProvider::Refresh() {
         offset_seconds_ =
             static_cast<std::int32_t>(server_timestamp - client_timestamp);
         last_sync_time_ = std::chrono::steady_clock::now();
+        synchronized_ = true;
         SPDLOG_INFO(
             "Successfully synchronized with NTP server '{}'. "
             "Server timestamp: {}, "
@@ -87,6 +98,9 @@ bool TimeProvider::Refresh() {
       SPDLOG_WARN("Unknown error during NTP request to {}:{}", server, port);
     }
   }
+  // Отметку времени обновляем и при неудаче — иначе следующий же вызов снова
+  // пойдёт опрашивать все серверы.
+  last_sync_time_ = std::chrono::steady_clock::now();
   SPDLOG_ERROR(
       "Failed to get time from NTP server. "
       "Using local system time without synchronization");

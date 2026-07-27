@@ -44,6 +44,7 @@ class Client final {
   bool Send(fptn::common::network::IPPacketPtr packet) const;
   void SetRecvIPPacketCallback(const NewIPPacketCallback& callback) noexcept;
   bool IsStarted() const;
+  bool IsConnected() const;
   void UpdateTunInterfaceAddressIPv4(const IPv4Address& addr);
 
   const std::string& LatestError() const;
@@ -52,7 +53,11 @@ class Client final {
   void Run();
 
  private:
-  const int kMaxReconnectionAttempts_ = 35;
+  // Попыток внутри одной сессии. Дальше эстафету принимает VpnManager::Supervise
+  // — он пересоздаёт сессию целиком с нарастающей паузой и пере-синхронизацией
+  // времени. Прежние 35 попыток были компенсацией отсутствующего супервизора:
+  // клиент долбился в мёртвое соединение, но сессию никто не пересоздавал.
+  const int kMaxReconnectionAttempts_ = 3;
 
   std::thread th_;
   mutable std::mutex mutex_;

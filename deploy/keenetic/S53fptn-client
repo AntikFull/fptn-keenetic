@@ -21,6 +21,11 @@ fi
 
 IFNAME="${TUN_INTERFACE:-opkgtun1}"
 MTU="${TUN_MTU:-1360}"
+# Адрес туннеля. Должен совпадать с тем, что install.sh сообщает ndm: получатель
+# входящих пакетов переписывается клиентом именно в это значение, и ndm
+# транслирует в него же трафик локальной сети — при расхождении conntrack не
+# сопоставит ответы и обратного трафика не будет.
+TUN_IP="${TUN_ADDRESS:-10.0.0.1}"
 
 # Логи пишем на накопитель Entware, а не в /var/log (это tmpfs, т.е. ОЗУ роутера)
 FPTN_LOG_DIR="${FPTN_LOG_DIR:-/opt/var/log/fptn}"
@@ -29,8 +34,44 @@ FPTN_LOG_MAX_FILES="${FPTN_LOG_MAX_FILES:-2}"
 export FPTN_LOG_DIR FPTN_LOG_MAX_SIZE_MB FPTN_LOG_MAX_FILES
 mkdir -p "$FPTN_LOG_DIR" 2>/dev/null || true
 
-# MTU задаёт сам клиент, чтобы у интерфейса был единственный владелец настроек
-ARGS="--access-token ${TOKEN} --tun-interface-name ${IFNAME} --mtu-size ${MTU} --disable-routing"
+# Ожидание сети перед стартом.
+#
+# Клиент до создания туннеля должен разобрать токен, отрезолвить хост, выполнить
+# TLS-логин и получить адрес DNS. Любая из этих операций при отсутствии WAN
+# завершается выходом из процесса, и rc.func сообщает `exit code 255` — ровно
+# это и видно в логе роутера при загрузке, рядом с "S60wdtt: PPPoE not ready":
+#     [I] root: Failed to start fptn-client from .
+#     [E] ndm: Opkg::Manager: /opt/etc/init.d/S53fptn-client: exit code 255.
+# Ждём появления маршрута по умолчанию, но не бесконечно: init-скрипты
+# KeeneticOS выполняются последовательно, и долгая пауза здесь задержит запуск
+# всего, что идёт после. Не дождались — выходим с нулём (не 255), дальше
+# подхватит fptn-watchdog.sh.
+WAIT_NETWORK_SECONDS="${FPTN_WAIT_NETWORK:-45}"
+
+wait_for_network() {
+    _n=0
+    while [ "$_n" -lt "$WAIT_NETWORK_SECONDS" ]; do
+        if ip route show default 2>/dev/null | grep -q "^default"; then
+            return 0
+        fi
+        _n=$((_n + 1))
+        sleep 1
+    done
+    return 1
+}
+
+case "$1" in
+    start|restart)
+        if ! wait_for_network; then
+            echo "Сеть не поднялась за ${WAIT_NETWORK_SECONDS} с. Старт отложен, повтор выполнит watchdog."
+            exit 0
+        fi
+        ;;
+esac
+
+# MTU и адрес задаёт сам клиент, чтобы у интерфейса был единственный владелец
+# настроек
+ARGS="--access-token ${TOKEN} --tun-interface-name ${IFNAME} --tun-interface-ip ${TUN_IP} --mtu-size ${MTU} --disable-routing"
 
 if [ -n "$PREFERRED_SERVER" ]; then
     FIRST_SERVER=$(echo "$PREFERRED_SERVER" | cut -d',' -f1 | tr -d ' ')
@@ -54,8 +95,6 @@ if [ -n "$PREFERRED_SERVER" ]; then
         fi
     fi
 fi
-
-KTUN=$(echo "$IFNAME" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
 
 # Прежние версии этого скрипта добавляли правила через "iptables -I" при каждом
 # запуске и никогда их не удаляли, поэтому у существующих установок цепочки
@@ -82,12 +121,17 @@ case "$1" in
     start|restart) cleanup_legacy_iptables ;;
 esac
 
-# Адрес и MTU туннеля назначает сам клиент (10.0.0.1/32, см. --mtu-size выше).
-# Здесь остаётся только то, чего клиент не делает: приоритет интерфейса для ndm
-# и access-list, который KeeneticOS удаляет автоматически при простое.
+# Адрес и MTU туннеля назначает сам клиент (см. --tun-interface-ip и --mtu-size
+# выше). Здесь остаётся только то, чего клиент не делает: приоритет интерфейса
+# для ndm и access-list, который KeeneticOS удаляет автоматически при простое.
+#
+# POSTCMD обязан быть ОДНИМ словом без кавычек, аргументов и перенаправлений:
+# rc.func подставляет его как `$POSTCMD` без eval, и всё остальное разъезжается
+# по аргументам. Прежний вариант с четырьмя `ndmc -c '...'` в одной строке
+# приводил к `no such command: 'interface` и не настраивал интерфейс вообще.
 PRECMD=""
 PREARGS=""
-POSTCMD="ndmc -c 'interface ${KTUN} ip global 50000' >/dev/null 2>&1; ndmc -c 'access-list _WEBADMIN_${KTUN} permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0' >/dev/null 2>&1; ndmc -c 'interface ${KTUN} ip access-group _WEBADMIN_${KTUN} in' >/dev/null 2>&1; ndmc -c 'access-list _WEBADMIN_${KTUN} auto-delete' >/dev/null 2>&1; true"
+POSTCMD="/opt/bin/fptn-ndm-setup.sh"
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 . /opt/etc/init.d/rc.func

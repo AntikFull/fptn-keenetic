@@ -42,11 +42,14 @@ class TimeProvider final {
 
  private:
   const std::chrono::hours kSyncInterval_{1};
+  // Пауза перед повторной попыткой, если синхронизация не удалась.
+  const std::chrono::seconds kRetryInterval_{30};
 
   mutable std::mutex mutex_;
   const NtpServers servers_;
 
   std::atomic<std::int32_t> offset_seconds_;
+  std::atomic<bool> synchronized_{false};
   std::atomic<std::chrono::steady_clock::time_point> last_sync_time_;
 };
 

@@ -553,7 +553,11 @@ int main(int argc, char* argv[]) {
         fptn::vpn::VpnManager::Config{.http_client = std::move(http_client),
             .route_manager = disable_routing ? nullptr : route_manager,
             .virtual_net_interface = virtual_network_interface,
-            .plugins = std::move(client_plugins)});
+            .plugins = std::move(client_plugins),
+            // В режиме роутера сдаваться нельзя: за клиентом стоит вся локальная
+            // сеть, и выход из процесса означает потерю связи до срабатывания
+            // внешнего watchdog. Супервизор переподключается бесконечно.
+            .max_full_restarts = disable_routing ? 0 : 10});
 
     vpn_client.Start();
 

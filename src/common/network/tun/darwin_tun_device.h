@@ -180,6 +180,17 @@ class DarwinTunDevice {
     return ::poll(&pfd, 1, timeout_ms) > 0 && (pfd.revents & POLLIN) != 0;
   }
 
+  // Ожидание готовности к записи — см. комментарий в linux_tun_device.h.
+  bool WaitForWritable(int timeout_ms) {
+    if (fd_ < 0) {
+      return false;
+    }
+    struct pollfd pfd = {};
+    pfd.fd = fd_;
+    pfd.events = POLLOUT;
+    return ::poll(&pfd, 1, timeout_ms) > 0 && (pfd.revents & POLLOUT) != 0;
+  }
+
   int Write(const void* data, int size) {
     // Determine address family from IP version nibble
     constexpr int kAfHeaderSize = 4;

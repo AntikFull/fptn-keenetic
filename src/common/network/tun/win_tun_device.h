@@ -148,6 +148,15 @@ class WinTunDevice {
                static_cast<DWORD>(timeout_ms)) == WAIT_OBJECT_0;
   }
 
+  // У Wintun нет события «готов к записи»: WintunAllocateSendPacket либо сразу
+  // выделяет буфер в кольце, либо возвращает NULL при его переполнении.
+  // Поэтому здесь просто короткая пауза, чтобы цикл повторной отправки не
+  // превращался в плотный спин.
+  bool WaitForWritable(int timeout_ms) {
+    Sleep(static_cast<DWORD>(timeout_ms > 0 ? timeout_ms : 0));
+    return session_ != nullptr;
+  }
+
   int Write(const void* data, int size) {
     if (!session_ || !data || size <= 0) {
       return 0;

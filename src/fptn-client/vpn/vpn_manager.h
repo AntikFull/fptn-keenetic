@@ -6,10 +6,12 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <queue>
@@ -33,6 +35,11 @@ class VpnManager final {
     fptn::routing::RouteManagerSPtr route_manager;
     fptn::common::network::TunInterfaceSPtr virtual_net_interface;
     fptn::plugin::PluginList plugins;
+    // Сколько раз супервизор пересоздаёт сессию целиком, прежде чем сдаться.
+    // 0 — не сдаваться никогда: это режим для роутера, где нет пользователя,
+    // который нажал бы «переподключить», и выход из процесса означает, что
+    // весь LAN остаётся без туннеля до срабатывания внешнего watchdog.
+    int max_full_restarts = 10;
   };
 
  public:
@@ -44,10 +51,14 @@ class VpnManager final {
   std::size_t GetSendRate();
   std::size_t GetReceiveRate();
   bool IsStarted();
+  bool IsReconnecting() const;
+  int ReconnectAttempt() const;
+  int MaxReconnectAttempts() const;
   [[nodiscard]] std::string GetInterfaceName() const;
 
  protected:
   void ProcessWebSocketPackets();
+  void Supervise();
 
   void HandleOnPacketFromVirtualNetworkInterface(
       fptn::common::network::IPPacketPtr packet);
@@ -55,11 +66,23 @@ class VpnManager final {
 
  private:
   mutable std::mutex mutex_;
+  // Очередь пакетов websocket -> TUN живёт под собственным мьютексом. Общий
+  // mutex_ держится в том числе во время отправки пакета, поэтому объединение
+  // этих двух блокировок сериализовало весь датапуть на одном локе.
+  mutable std::mutex queue_mutex_;
+
   std::atomic<bool> running_;
+  std::atomic<bool> ever_connected_;
+  std::atomic<bool> gave_up_;
+  std::atomic<bool> reconnecting_;
+  std::atomic<int> reconnect_attempt_;
 
   Config config_;
 
   std::thread thread_;
+  std::thread supervisor_thread_;
+  std::mutex reconnect_mutex_;
+  std::condition_variable reconnect_cv_;
   std::condition_variable ws_queue_cv_;
   std::queue<fptn::common::network::IPPacketPtr> ws_packet_queue_;
 
