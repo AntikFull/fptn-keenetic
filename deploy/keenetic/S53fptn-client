@@ -118,7 +118,10 @@ cleanup_legacy_iptables() {
 # Вызываем напрямую, а не через PRECMD: разные версии Entware rc.func трактуют
 # PRECMD по-разному (где-то как отдельную команду, где-то как префикс запуска).
 case "$1" in
-    start|restart) cleanup_legacy_iptables ;;
+    start|restart) 
+        cleanup_legacy_iptables
+        ip link delete "${IFNAME}" >/dev/null 2>&1 || true
+        ;;
 esac
 
 # Адрес и MTU туннеля назначает сам клиент (см. --tun-interface-ip и --mtu-size
