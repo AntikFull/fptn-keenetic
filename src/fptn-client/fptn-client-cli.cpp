@@ -4,8 +4,10 @@ Copyright (c) 2024-2026 Stas Skokov
 Distributed under the MIT License (https://opensource.org/licenses/MIT)
 =============================================================================*/
 
-#include <iostream>
+#include <algorithm>
+#include <chrono>
 #include <cstdlib>
+#include <iostream>
 #include <nlohmann/json.hpp>
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -15,6 +17,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -88,6 +91,18 @@ int main(int argc, char* argv[]) {
     args.add_argument("--preferred-server")
         .default_value("")
         .help("Preferred server name (case-insensitive)");
+    args.add_argument("--disable-auto-fallback")
+        .default_value(false)
+        .implicit_value(true)
+        .help("Не переходить к автоматическому выбору, если приоритетные серверы недоступны");
+    args.add_argument("--max-full-restarts")
+        .default_value(0)
+        .scan<'i', int>()
+        .help("Максимальное число полных перезапусков сессии; 0 — без ограничений");
+    args.add_argument("--startup-retry-delay")
+        .default_value(0)
+        .scan<'i', int>()
+        .help("Задержка между нативными попытками первичного подключения; 0 — не повторять");
     args.add_argument("--tun-interface-name")
         .default_value("tun0")
         .help("Network interface name");
@@ -268,6 +283,10 @@ int main(int argc, char* argv[]) {
         fptn::common::network::IPv6Address::Create(param_gateway_ipv6);
 
     const auto preferred_server = args.get<std::string>("--preferred-server");
+    const bool disable_auto_fallback = args.get<bool>("--disable-auto-fallback");
+    const int max_full_restarts = args.get<int>("--max-full-restarts");
+    const int startup_retry_delay =
+        std::max(0, args.get<int>("--startup-retry-delay"));
 
     const auto tun_interface_name =
         args.get<std::string>("--tun-interface-name");
@@ -373,75 +392,128 @@ int main(int argc, char* argv[]) {
     const std::vector<std::string> blacklist_domains =
         fptn::common::utils::SplitCommaSeparated(blacklist_domains_str);
 
-    /* check config */
+    bool use_preferred_servers = true;
+    while (true) {
+    /* Первичное подключение. На роутере этот цикл заменяет внешний watchdog:
+       процесс остаётся живым при отсутствии WAN, повторяет авторизацию и
+       последовательно проверяет приоритетные серверы. */
     const auto access_token = args.get<std::string>("--access-token");
-    fptn::config::ConfigFile config(access_token, sni, censorship_strategy);
     fptn::utils::speed_estimator::ServerInfo selected_server;
-    std::string pre_obtained_token;
-    try {
-      config.Parse();
-      if (args.get<bool>("--show-servers")) {
-        nlohmann::json j;
-        j["service_name"] = config.GetServiceName();
-        j["username"] = config.GetUsername();
-        j["servers"] = nlohmann::json::array();
-        for (const auto& s : config.GetServers()) {
-          nlohmann::json sj;
-          sj["name"] = s.name;
-          sj["host"] = s.host;
-          sj["port"] = s.port;
-          sj["md5_fingerprint"] = s.md5_fingerprint;
-          j["servers"].push_back(sj);
+    fptn::common::network::IPv4Address server_ip;
+    fptn::common::network::IPv4Address dns_server_ipv4;
+    fptn::common::network::IPv6Address dns_server_ipv6;
+    std::unique_ptr<fptn::vpn::http::Client> http_client;
+    int startup_attempt = 0;
+
+    while (!http_client) {
+      try {
+        fptn::config::ConfigFile config(access_token, sni, censorship_strategy);
+        config.Parse();
+        if (args.get<bool>("--show-servers")) {
+          nlohmann::json j;
+          j["service_name"] = config.GetServiceName();
+          j["username"] = config.GetUsername();
+          j["servers"] = nlohmann::json::array();
+          for (const auto& s : config.GetServers()) {
+            nlohmann::json sj;
+            sj["name"] = s.name;
+            sj["host"] = s.host;
+            sj["port"] = s.port;
+            sj["md5_fingerprint"] = s.md5_fingerprint;
+            j["servers"].push_back(sj);
+          }
+          std::cout << j.dump() << std::endl;
+          return EXIT_SUCCESS;
         }
-        std::cout << j.dump() << std::endl;
-        return EXIT_SUCCESS;
-      }
-      bool use_login_race = preferred_server.empty();
-      if (!preferred_server.empty()) {
-        const std::vector<std::string> pref_servers =
-            fptn::common::utils::SplitCommaSeparated(preferred_server);
-        bool found = false;
-        for (const auto& s_name : pref_servers) {
-          auto server_opt = config.GetServer(s_name);
-          if (server_opt.has_value()) {
-            const auto check_ip = fptn::routing::ResolveDomain(server_opt->host);
-            if (!check_ip.IsEmpty()) {
-              selected_server = std::move(*server_opt);
+
+        std::string pre_obtained_token;
+        bool use_login_race = preferred_server.empty() || !use_preferred_servers;
+        if (!preferred_server.empty() && use_preferred_servers) {
+          const auto pref_servers =
+              fptn::common::utils::SplitCommaSeparated(preferred_server);
+          bool found = false;
+          for (const auto& server_name : pref_servers) {
+            auto server_opt = config.GetServer(server_name);
+            if (!server_opt) {
+              SPDLOG_WARN("Приоритетный сервер '{}' отсутствует в токене", server_name);
+              continue;
+            }
+            auto candidate = *server_opt;
+            if (candidate.username.empty()) candidate.username = config.GetUsername();
+            if (candidate.password.empty()) candidate.password = config.GetPassword();
+            auto login_result = fptn::utils::speed_estimator::FindServerByLogin(
+                sni, std::vector<fptn::utils::speed_estimator::ServerInfo>{candidate},
+                censorship_strategy, 10);
+            if (login_result) {
+              selected_server = login_result->server;
+              pre_obtained_token = std::move(login_result->access_token);
               found = true;
+              use_login_race = false;
               SPDLOG_INFO("Selected preferred server by priority: {}", selected_server.name);
               break;
-            } else {
-              SPDLOG_WARN("DNS resolve failed for preferred server '{}' ({})",
-                  s_name, server_opt->host);
             }
-          } else {
-            SPDLOG_WARN("Preferred server '{}' does not exist in token!", s_name);
+            SPDLOG_WARN("Приоритетный сервер '{}' недоступен", server_name);
+          }
+          if (!found) {
+            use_login_race = true;
+            SPDLOG_WARN("Все приоритетные серверы недоступны");
           }
         }
-        if (!found) {
-          SPDLOG_WARN(
-              "None of preferred servers in '{}' are reachable. Falling back to auto-selection.",
-              preferred_server);
-          use_login_race = true;
+
+        if (use_login_race && !disable_auto_fallback) {
+          auto login_result = config.FindServerByLogin(10);
+          if (!login_result) {
+            throw std::runtime_error("Все серверы недоступны");
+          }
+          selected_server = login_result->server;
+          pre_obtained_token = std::move(login_result->access_token);
+        } else if (use_login_race) {
+          throw std::runtime_error(
+              "Все приоритетные серверы недоступны, автоматический fallback отключён");
         }
-      }
-      if (use_login_race) {
-        auto login_result = config.FindServerByLogin(10);
-        if (!login_result) {
-          SPDLOG_ERROR("All servers unavailable!");
+
+        server_ip = fptn::routing::ResolveDomain(selected_server.host);
+        if (server_ip.IsEmpty()) {
+          throw std::runtime_error(
+              fmt::format("DNS resolve error: {}", selected_server.host));
+        }
+
+        auto candidate_client = std::make_unique<fptn::vpn::http::Client>(
+            fptn::protocol::https::WebsocketClient::Config{.server_ip = server_ip,
+                .server_port = selected_server.port,
+                .tun_interface_address_ipv4 = tun_interface_address_ipv4,
+                .tun_interface_address_ipv6 = tun_interface_address_ipv6,
+                .sni = sni,
+                .expected_md5_fingerprint = selected_server.md5_fingerprint,
+                .censorship_strategy = censorship_strategy,
+                .on_connected_callback = nullptr,
+                .new_ip_pkt_callback = nullptr});
+        if (!pre_obtained_token.empty()) {
+          candidate_client->SetAccessToken(pre_obtained_token);
+        }
+        if (!candidate_client->Login(config.GetUsername(), config.GetPassword())) {
+          throw std::runtime_error("Ошибка первичной авторизации");
+        }
+        auto dns = candidate_client->GetDns();
+        if (dns.first.IsEmpty() || dns.second.IsEmpty()) {
+          throw std::runtime_error("Не удалось получить DNS туннеля");
+        }
+        dns_server_ipv4 = dns.first;
+        dns_server_ipv6 = dns.second;
+        http_client = std::move(candidate_client);
+      } catch (const std::exception& err) {
+        if (startup_retry_delay <= 0 || args.get<bool>("--show-servers")) {
+          SPDLOG_ERROR("Ошибка первичного подключения: {}", err.what());
           return EXIT_FAILURE;
         }
-        selected_server = login_result->server;
-        pre_obtained_token = std::move(login_result->access_token);
+        ++startup_attempt;
+        const int delay = std::min(60,
+            startup_retry_delay * std::min(startup_attempt, 12));
+        SPDLOG_WARN(
+            "WAITING_FOR_NETWORK: {}. Повтор первичного подключения через {} с",
+            err.what(), delay);
+        std::this_thread::sleep_for(std::chrono::seconds(delay));
       }
-    } catch (const std::runtime_error& err) {
-      SPDLOG_ERROR("Config error: {}", err.what());
-      return EXIT_FAILURE;
-    }
-    const auto server_ip = fptn::routing::ResolveDomain(selected_server.host);
-    if (server_ip.IsEmpty()) {
-      SPDLOG_ERROR("DNS resolve error: {}", selected_server.host);
-      return EXIT_FAILURE;
     }
 
     SPDLOG_INFO(
@@ -472,33 +544,6 @@ int main(int argc, char* argv[]) {
         exclude_networks_str, include_networks_str,
         enable_split_tunnel ? "enabled" : "disabled", tunnel_mode,
         split_domains_str, blacklist_domains_str);
-
-    /* auth & dns */
-    auto http_client = std::make_unique<fptn::vpn::http::Client>(
-        fptn::protocol::https::WebsocketClient::Config{.server_ip = server_ip,
-            .server_port = selected_server.port,
-            .tun_interface_address_ipv4 = tun_interface_address_ipv4,
-            .tun_interface_address_ipv6 = tun_interface_address_ipv6,
-            .sni = sni,
-            .expected_md5_fingerprint = selected_server.md5_fingerprint,
-            .censorship_strategy = censorship_strategy,
-            .on_connected_callback = nullptr,
-            .new_ip_pkt_callback = nullptr});
-
-    if (!pre_obtained_token.empty()) {
-      http_client->SetAccessToken(pre_obtained_token);
-    }
-    const bool status =
-        http_client->Login(config.GetUsername(), config.GetPassword());
-    if (!status) {
-      SPDLOG_ERROR("The username or password you entered is incorrect");
-      return EXIT_FAILURE;
-    }
-    const auto [dns_server_ipv4, dns_server_ipv6] = http_client->GetDns();
-    if (dns_server_ipv4.IsEmpty() || dns_server_ipv6.IsEmpty()) {
-      SPDLOG_ERROR("DNS server error! Check your connection!");
-      return EXIT_FAILURE;
-    }
 
     /* tun interface */
     auto virtual_network_interface =
@@ -554,21 +599,37 @@ int main(int argc, char* argv[]) {
             .route_manager = disable_routing ? nullptr : route_manager,
             .virtual_net_interface = virtual_network_interface,
             .plugins = std::move(client_plugins),
-            // В режиме роутера сдаваться нельзя: за клиентом стоит вся локальная
-            // сеть, и выход из процесса означает потерю связи до срабатывания
-            // внешнего watchdog. Супервизор переподключается бесконечно.
-            .max_full_restarts = disable_routing ? 0 : 10});
+            // После этого количества полных рестартов внешний цикл этого же
+            // процесса заново выбирает сервер. Никакой cron/watchdog не нужен.
+            .max_full_restarts = max_full_restarts});
 
-    vpn_client.Start();
+    if (!vpn_client.Start()) {
+      SPDLOG_ERROR("Не удалось запустить VPN manager. Повторится полный цикл выбора сервера");
+    }
 
     /* start event loop */
-    fptn::utils::WaitForSignal(vpn_client);
+    const bool stopped_by_signal = fptn::utils::WaitForSignal(vpn_client);
 
     /* clean */
     route_manager->Clean();
     vpn_client.Stop();
-    spdlog::shutdown();
-    return EXIT_SUCCESS;
+    if (stopped_by_signal) {
+      spdlog::shutdown();
+      return EXIT_SUCCESS;
+    }
+    if (startup_retry_delay <= 0) {
+      spdlog::shutdown();
+      return EXIT_SUCCESS;
+    }
+    if (!preferred_server.empty() && !disable_auto_fallback) {
+      use_preferred_servers = false;
+      SPDLOG_WARN(
+          "Приоритетная сессия исчерпала попытки. Следующий цикл использует автоматический fallback");
+    }
+    SPDLOG_WARN("Полный цикл VPN завершён. Повторный выбор сервера через {} с",
+        startup_retry_delay);
+    std::this_thread::sleep_for(std::chrono::seconds(startup_retry_delay));
+    }
   } catch (const std::exception& ex) {
     SPDLOG_ERROR("An error occurred: {}. Exiting...", ex.what());
   } catch (...) {

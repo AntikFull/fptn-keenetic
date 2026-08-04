@@ -36,9 +36,8 @@ class VpnManager final {
     fptn::common::network::TunInterfaceSPtr virtual_net_interface;
     fptn::plugin::PluginList plugins;
     // Сколько раз супервизор пересоздаёт сессию целиком, прежде чем сдаться.
-    // 0 — не сдаваться никогда: это режим для роутера, где нет пользователя,
-    // который нажал бы «переподключить», и выход из процесса означает, что
-    // весь LAN остаётся без туннеля до срабатывания внешнего watchdog.
+    // 0 — не сдаваться никогда. При положительном значении внешний цикл
+    // самого fptn-client-cli заново выбирает сервер после исчерпания попыток.
     int max_full_restarts = 10;
   };
 
@@ -51,6 +50,7 @@ class VpnManager final {
   std::size_t GetSendRate();
   std::size_t GetReceiveRate();
   bool IsStarted();
+  bool HasGivenUp() const;
   bool IsReconnecting() const;
   int ReconnectAttempt() const;
   int MaxReconnectAttempts() const;

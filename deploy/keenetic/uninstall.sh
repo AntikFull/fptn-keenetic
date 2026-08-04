@@ -36,6 +36,7 @@ echo "[2/5] Удаление бинарников и файлов веб-пан�
 rm -f /opt/bin/fptn-client-cli
 rm -f /opt/bin/fptn-client-wrapper.sh
 rm -f /opt/bin/fptn-watchdog.sh
+rm -f /opt/bin/fptn-ndm-setup.sh
 rm -f /opt/etc/fptn-watchdog.sh
 rm -f /opt/etc/fptn-client.conf
 rm -f /opt/etc/init.d/S53fptn-client
@@ -49,7 +50,7 @@ if [ -f "/opt/etc/init.d/S80lighttpd" ]; then
 fi
 
 # 4. Удаление из планировщика Cron / Clean Crontab
-echo "[4/5] Очистка планировщика Cron / Cleaning Crontab..."
+echo "[4/5] Очистка старых записей cron / Cleaning legacy crontab entries..."
 if which crontab >/dev/null 2>&1; then
     (crontab -l 2>/dev/null | grep -v "fptn-watchdog" | crontab - 2>/dev/null) || true
 fi

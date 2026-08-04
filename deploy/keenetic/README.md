@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/depl
 ### Шаг 1. Установка пакетов Entware
 ```bash
 opkg update
-opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates cron
+opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates
 ```
 
 ### Шаг 2. Развертывание бинарника
@@ -92,8 +92,17 @@ $HTTP["url"] =~ "^/fptn/" {
    TOKEN="ВАШ_ТОКЕН_ПОДПИСКИ"
    PREFERRED_SERVER=""
    TUN_INTERFACE="opkgtun1"
+   TUN_ADDRESS="10.0.0.1"
+   TUN_MTU="1360"
+   SERVER_SNI="rutube.ru"
+   BYPASS_METHOD="sni-spoofing"
+   DISABLE_AUTO_FALLBACK="no"
+   MAX_FULL_RESTARTS="15"
+   STARTUP_RETRY_DELAY="5"
    ```
 3. Скопируйте скрипт инициализации [S53fptn-client](S53fptn-client) в `/opt/etc/init.d/S53fptn-client` и сделайте исполняемым: `chmod +x /opt/etc/init.d/S53fptn-client`.
+
+Ожидание WAN, восстановление соединения и переключение серверов выполняются самим `fptn-client-cli`. Отдельные watchdog-скрипты и cron не требуются.
 
 ---
 
@@ -163,7 +172,7 @@ If you prefer a manual setup, follow these steps:
 ### Step 1. Install Entware Packages
 ```bash
 opkg update
-opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates cron
+opkg install lighttpd php8-cgi php8-mod-openssl php8-mod-session procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates
 ```
 
 ### Step 2. Download Binary

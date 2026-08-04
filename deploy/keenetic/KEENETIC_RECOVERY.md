@@ -11,7 +11,7 @@
 2. Настройки веб-панели Lighttpd: `/opt/etc/lighttpd/conf.d/85-fptn.conf`.
 3. Файлы веб-интерфейса: `/opt/share/www/fptn/`.
 4. Скрипт автозапуска службы: `/opt/etc/init.d/S53fptn-client`.
-5. Автопинг-наблюдатель Watchdog: `/opt/bin/fptn-watchdog.sh`.
+5. Встроенный supervisor: повторное подключение выполняет `fptn-client-cli`.
 
 ### Команда создания архива бэкапа (выполняется в SSH роутера):
 ```bash
@@ -19,13 +19,12 @@ opkg install tar
 /opt/bin/tar -czf /opt/fptn_keenetic_backup.tar.gz \
   /opt/etc/fptn-client.conf \
   /opt/etc/init.d/S53fptn-client \
-  /opt/bin/fptn-watchdog.sh \
   /opt/etc/lighttpd/conf.d/85-fptn.conf \
   /opt/share/www/fptn
 ```
-Архив `/tmp/fptn_keenetic_backup.tar.gz` можно сохранить на ПК через SCP/SFTP или скопировать на подключенную USB-флешку:
+Архив `/opt/fptn_keenetic_backup.tar.gz` можно сохранить на ПК через SCP/SFTP или скопировать на подключенную USB-флешку:
 ```bash
-cp /tmp/fptn_keenetic_backup.tar.gz /tmp/mnt/YOUR_USB_NAME/
+cp /opt/fptn_keenetic_backup.tar.gz /tmp/mnt/YOUR_USB_NAME/
 ```
 
 ---
@@ -40,7 +39,7 @@ cp /tmp/fptn_keenetic_backup.tar.gz /tmp/mnt/YOUR_USB_NAME/
 curl -sL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/install.sh | sh
 ```
 Установщик автоматически:
-- Подгрузит все зависимости Entware (`lighttpd`, `php8-cgi`, `libxml2`, `curl`, `cron`).
+- Подгрузит зависимости Entware (`lighttpd`, `php8-cgi`, `libxml2`, `curl`).
 - Зарегистрирует туннельный интерфейс `OpkgTun1` в KeeneticOS с безопасным приоритетом `ip global 50000`.
 - Установит бинарник `fptn-client-cli` под вашу архитектуру роутера (`aarch64`, `armv7` или `mipsel`).
 - Развернет веб-панель FPTN на порту `8088`.
@@ -72,7 +71,7 @@ ndmc -c "system configuration save"
 ```bash
 curl -sL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy/keenetic/uninstall.sh | sh
 ```
-Скрипт остановки удалит бинарники, очистит правила cron и KeeneticOS CLI.
+Скрипт остановки удалит бинарники и очистит интерфейс KeeneticOS.
 
 ---
 
@@ -84,11 +83,11 @@ curl -sL https://raw.githubusercontent.com/AntikFull/fptn-keenetic/master/deploy
   ```
 - **Просмотр логов работы клиента в реальном времени:**
   ```bash
-  tail -f /var/log/fptn/fptn-client-cli.log
+  tail -f /opt/var/log/fptn/fptn-client-cli.log
   ```
-- **Просмотр логов наблюдателя Watchdog:**
+- **Просмотр состояния встроенного supervisor:**
   ```bash
-  cat /opt/var/log/fptn-watchdog.log
+  cat /opt/var/log/fptn/fptn-client-cli.log
   ```
 - **Проверка наличия IP адреса на туннеле:**
   ```bash

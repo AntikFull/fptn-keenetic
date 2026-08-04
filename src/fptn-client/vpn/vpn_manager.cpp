@@ -64,6 +64,8 @@ bool VpnManager::IsStarted() {
 
 bool VpnManager::IsReconnecting() const { return reconnecting_; }
 
+bool VpnManager::HasGivenUp() const { return gave_up_; }
+
 int VpnManager::ReconnectAttempt() const { return reconnect_attempt_; }
 
 int VpnManager::MaxReconnectAttempts() const {
@@ -84,6 +86,10 @@ bool VpnManager::Start() {
     }
   }
   running_ = true;
+  gave_up_ = false;
+  ever_connected_ = false;
+  reconnecting_ = false;
+  reconnect_attempt_ = 0;
 
   // NOLINTNEXTLINE(modernize-avoid-bind)
   config_.http_client->SetRecvIPPacketCallback(std::bind(
@@ -114,6 +120,8 @@ bool VpnManager::Start() {
     SPDLOG_ERROR(
         "Could not open TUN device after IP assignment; skipping route"
         "setup and marking the connection as down so it can recover");
+    running_ = false;
+    gave_up_ = true;
     return false;
   }
 

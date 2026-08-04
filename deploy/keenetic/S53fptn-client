@@ -26,6 +26,7 @@ MTU="${TUN_MTU:-1360}"
 # транслирует в него же трафик локальной сети — при расхождении conntrack не
 # сопоставит ответы и обратного трафика не будет.
 TUN_IP="${TUN_ADDRESS:-10.0.0.1}"
+TUN_IPV6="${TUN_IPV6_ADDRESS:-}"
 
 # Логи пишем на накопитель Entware, а не в /var/log (это tmpfs, т.е. ОЗУ роутера)
 FPTN_LOG_DIR="${FPTN_LOG_DIR:-/opt/var/log/fptn}"
@@ -34,66 +35,53 @@ FPTN_LOG_MAX_FILES="${FPTN_LOG_MAX_FILES:-2}"
 export FPTN_LOG_DIR FPTN_LOG_MAX_SIZE_MB FPTN_LOG_MAX_FILES
 mkdir -p "$FPTN_LOG_DIR" 2>/dev/null || true
 
-# Ожидание сети перед стартом.
-#
-# Клиент до создания туннеля должен разобрать токен, отрезолвить хост, выполнить
-# TLS-логин и получить адрес DNS. Любая из этих операций при отсутствии WAN
-# завершается выходом из процесса, и rc.func сообщает `exit code 255` — ровно
-# это и видно в логе роутера при загрузке, рядом с "S60wdtt: PPPoE not ready":
-#     [I] root: Failed to start fptn-client from .
-#     [E] ndm: Opkg::Manager: /opt/etc/init.d/S53fptn-client: exit code 255.
-# Ждём появления маршрута по умолчанию, но не бесконечно: init-скрипты
-# KeeneticOS выполняются последовательно, и долгая пауза здесь задержит запуск
-# всего, что идёт после. Не дождались — выходим с нулём (не 255), дальше
-# подхватит fptn-watchdog.sh.
-WAIT_NETWORK_SECONDS="${FPTN_WAIT_NETWORK:-45}"
-
-wait_for_network() {
-    _n=0
-    while [ "$_n" -lt "$WAIT_NETWORK_SECONDS" ]; do
-        if ip route show default 2>/dev/null | grep -q "^default"; then
-            return 0
-        fi
-        _n=$((_n + 1))
-        sleep 1
-    done
-    return 1
-}
-
-case "$1" in
-    start|restart)
-        if ! wait_for_network; then
-            echo "Сеть не поднялась за ${WAIT_NETWORK_SECONDS} с. Старт отложен, повтор выполнит watchdog."
-            exit 0
-        fi
-        ;;
-esac
+# Ожидание WAN и повтор первичной авторизации выполняет сам fptn-client-cli.
+# Init-файл поэтому запускает процесс сразу, даже если роутер ещё поднимает PPPoE.
 
 # MTU и адрес задаёт сам клиент, чтобы у интерфейса был единственный владелец
 # настроек
 ARGS="--access-token ${TOKEN} --tun-interface-name ${IFNAME} --tun-interface-ip ${TUN_IP} --mtu-size ${MTU} --disable-routing"
 
+if [ -n "$TUN_IPV6" ]; then
+    ARGS="${ARGS} --tun-interface-ipv6 ${TUN_IPV6}"
+fi
+
+if [ -n "$GATEWAY_IP" ]; then
+    ARGS="${ARGS} --gateway-ip ${GATEWAY_IP}"
+fi
+if [ -n "$GATEWAY_IPV6" ]; then
+    ARGS="${ARGS} --gateway-ipv6 ${GATEWAY_IPV6}"
+fi
+if [ -n "$OUT_NETWORK_INTERFACE" ]; then
+    ARGS="${ARGS} --out-network-interface ${OUT_NETWORK_INTERFACE}"
+fi
+if [ -n "$SERVER_SNI" ]; then
+    ARGS="${ARGS} --sni ${SERVER_SNI}"
+fi
+if [ -n "$BYPASS_METHOD" ]; then
+    ARGS="${ARGS} --bypass-method ${BYPASS_METHOD}"
+fi
+if [ -n "$BLACKLIST_DOMAINS" ]; then
+    ARGS="${ARGS} --blacklist-domains ${BLACKLIST_DOMAINS}"
+fi
+if [ -n "$EXCLUDE_TUNNEL_NETWORKS" ]; then
+    ARGS="${ARGS} --exclude-tunnel-networks ${EXCLUDE_TUNNEL_NETWORKS}"
+fi
+if [ -n "$INCLUDE_TUNNEL_NETWORKS" ]; then
+    ARGS="${ARGS} --include-tunnel-networks ${INCLUDE_TUNNEL_NETWORKS}"
+fi
+if [ "$SPLIT_TUNNEL" = "yes" ] && [ -n "$SPLIT_TUNNEL_DOMAINS" ]; then
+    ARGS="${ARGS} --enable-split-tunnel true --split-tunnel-mode ${SPLIT_TUNNEL_MODE:-exclude} --split-tunnel-domains ${SPLIT_TUNNEL_DOMAINS}"
+fi
+if [ "$DISABLE_AUTO_FALLBACK" = "yes" ]; then
+    ARGS="${ARGS} --disable-auto-fallback"
+fi
+ARGS="${ARGS} --max-full-restarts ${MAX_FULL_RESTARTS:-0} --startup-retry-delay ${STARTUP_RETRY_DELAY:-5}"
+
 if [ -n "$PREFERRED_SERVER" ]; then
-    FIRST_SERVER=$(echo "$PREFERRED_SERVER" | cut -d',' -f1 | tr -d ' ')
-    if [ -n "$FIRST_SERVER" ]; then
-        SERVERS_FILE="/opt/etc/fptn-servers.json"
-        if [ -f "$SERVERS_FILE" ]; then
-            SRV_HOST=$(grep -A 2 "\"name\": \"$FIRST_SERVER\"" "$SERVERS_FILE" 2>/dev/null | grep '"host"' | cut -d'"' -f4)
-            SRV_PORT=$(grep -A 3 "\"name\": \"$FIRST_SERVER\"" "$SERVERS_FILE" 2>/dev/null | grep '"port"' | tr -dc '0-9')
-            PORT_TO_CHECK="${SRV_PORT:-443}"
-            if [ -n "$SRV_HOST" ]; then
-                if curl -s -k --connect-timeout 2 "https://${SRV_HOST}:${PORT_TO_CHECK}" >/dev/null 2>&1; then
-                    ARGS="${ARGS} --preferred-server ${FIRST_SERVER}"
-                else
-                    echo "Сервер ${FIRST_SERVER} [${SRV_HOST}] недоступен. Автоматическое переключение на автовыбор."
-                fi
-            else
-                ARGS="${ARGS} --preferred-server ${FIRST_SERVER}"
-            fi
-        else
-            ARGS="${ARGS} --preferred-server ${FIRST_SERVER}"
-        fi
-    fi
+    # Нативный клиент проверяет список последовательно реальной авторизацией,
+    # поэтому передаём все приоритеты и не дублируем сетевую проверку в shell.
+    ARGS="${ARGS} --preferred-server ${PREFERRED_SERVER}"
 fi
 
 # Прежние версии этого скрипта добавляли правила через "iptables -I" при каждом
@@ -125,17 +113,39 @@ case "$1" in
 esac
 
 # Адрес и MTU туннеля назначает сам клиент (см. --tun-interface-ip и --mtu-size
-# выше). Здесь остаётся только то, чего клиент не делает: приоритет интерфейса
-# для ndm и access-list, который KeeneticOS удаляет автоматически при простое.
-#
-# POSTCMD обязан быть ОДНИМ словом без кавычек, аргументов и перенаправлений:
-# rc.func подставляет его как `$POSTCMD` без eval, и всё остальное разъезжается
-# по аргументам. Прежний вариант с четырьмя `ndmc -c '...'` в одной строке
-# приводил к `no such command: 'interface` и не настраивал интерфейс вообще.
+# выше). Настройка интерфейса KeeneticOS выполняется ниже в этом же init-файле:
+# отдельный helper-скрипт не нужен.
 PRECMD=""
 PREARGS=""
-POSTCMD="/opt/bin/fptn-ndm-setup.sh"
+POSTCMD=""
 PATH=/opt/sbin:/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 . /opt/etc/init.d/rc.func
 
+# rc.func запускает клиент в фоне. После возврата ждём появление TUN и
+# регистрируем его в NDM. Повторная настройка безопасна и выполняется только
+# при старте/перезапуске службы.
+configure_ndm() {
+    [ "$1" = "start" ] || [ "$1" = "restart" ] || return 0
+    _ndm_log="${FPTN_LOG_DIR:-/opt/var/log/fptn}/fptn-ndm.log"
+    mkdir -p "$(dirname "$_ndm_log")" 2>/dev/null || true
+    _i=0
+    _wait="${FPTN_NDM_WAIT:-90}"
+    while [ "$_i" -lt "$_wait" ]; do
+        if ip link show "$IFNAME" >/dev/null 2>&1; then
+            _ktun=$(echo "$IFNAME" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
+            ndmc -c "interface ${_ktun} ip global 50000" >/dev/null 2>&1
+            ndmc -c "access-list _WEBADMIN_${_ktun} permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0" >/dev/null 2>&1
+            ndmc -c "interface ${_ktun} ip access-group _WEBADMIN_${_ktun} in" >/dev/null 2>&1
+            ndmc -c "access-list _WEBADMIN_${_ktun} auto-delete" >/dev/null 2>&1
+            ndmc -c "interface ${_ktun} up" >/dev/null 2>&1
+            echo "$(date): ${_ktun} настроен встроенным init-файлом" >> "$_ndm_log"
+            return 0
+        fi
+        _i=$((_i + 1))
+        sleep 1
+    done
+    echo "$(date): интерфейс ${IFNAME} не появился за ${_wait} с" >> "$_ndm_log"
+}
+
+configure_ndm "$1" &

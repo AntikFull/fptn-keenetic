@@ -41,6 +41,8 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ] || [ "$1" = "uninstall" ]; then
         /opt/etc/init.d/S53fptn-client stop >/dev/null 2>&1 || true
     fi
     pkill -9 -f "fptn-client-cli" >/dev/null 2>&1 || true
+    # Старый watchdog мог остаться от предыдущей версии — удаляем его процесс
+    # один раз при миграции, но новая установка такой процесс не запускает.
     pkill -9 -f "fptn-watchdog" >/dev/null 2>&1 || true
 
     echo "[2/5] Удаление бинарников и файлов веб-панели / Removing binary & web files..."
@@ -52,7 +54,7 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ] || [ "$1" = "uninstall" ]; then
         /opt/etc/init.d/S80lighttpd restart >/dev/null 2>&1 || true
     fi
 
-    echo "[4/5] Очистка планировщика Cron / Cleaning Crontab..."
+    echo "[4/5] Очистка старых записей cron / Cleaning legacy crontab entries..."
     # Задание могло быть добавлено и в /opt/etc/crontab, и в пользовательский
     # spool — разные версии установщика делали по-разному.
     if which crontab >/dev/null 2>&1; then
@@ -247,7 +249,7 @@ fi
 echo ""
 echo "[1/7] Обновление пакетов и установка зависимостей / Updating packages & dependencies..."
 opkg update || true
-opkg install lighttpd lighttpd-mod-cgi php8-cgi php8-mod-openssl php8-mod-session libxml2 procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates cron
+opkg install lighttpd lighttpd-mod-cgi php8-cgi php8-mod-openssl php8-mod-session libxml2 procps-ng-pgrep procps-ng-pkill curl ca-bundle ca-certificates
 
 # 4. Автоопределение архитектуры и скачивание бинарника fptn-client-cli / Detect CPU & Download Binary
 echo ""
@@ -420,14 +422,45 @@ echo "[6/8] Сохранение конфигурации FPTN / Saving FPTN con
 CONF_PATH="/opt/etc/fptn-client.conf"
 CONF_ENABLED="no"
 CONF_SERVERS=""
-CONF_WATCHDOG="yes"
 CONF_PASS=""
+CONF_TUN_IPV6=""
+CONF_TUN_MTU="1360"
+CONF_GATEWAY_IP=""
+CONF_GATEWAY_IPV6=""
+CONF_OUT_IFACE=""
+CONF_SNI="rutube.ru"
+CONF_BYPASS="sni-spoofing"
+CONF_BLACKLIST=""
+CONF_EXCLUDE="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+CONF_INCLUDE=""
+CONF_SPLIT="no"
+CONF_SPLIT_MODE="exclude"
+CONF_SPLIT_DOMAINS=""
+CONF_DISABLE_FALLBACK="no"
+CONF_MAX_RESTARTS="15"
+CONF_STARTUP_DELAY="5"
 
 if [ -f "$CONF_PATH" ]; then
+    . "$CONF_PATH" 2>/dev/null || true
     CONF_ENABLED=$(grep -E "^ENABLED=" "$CONF_PATH" | cut -d'=' -f2- | tr -d "\"'" || echo "no")
     CONF_SERVERS=$(grep -E "^PREFERRED_SERVER=" "$CONF_PATH" | cut -d'=' -f2- | tr -d "\"'" || echo "")
-    CONF_WATCHDOG=$(grep -E "^WATCHDOG=" "$CONF_PATH" | cut -d'=' -f2- | tr -d "\"'" || echo "yes")
     CONF_PASS=$(grep -E "^WEB_PASSWORD=" "$CONF_PATH" | cut -d'=' -f2- | tr -d "\"'" || echo "")
+    CONF_TUN_IPV6="${TUN_IPV6_ADDRESS:-}"
+    CONF_TUN_MTU="${TUN_MTU:-1360}"
+    CONF_GATEWAY_IP="${GATEWAY_IP:-}"
+    CONF_GATEWAY_IPV6="${GATEWAY_IPV6:-}"
+    CONF_OUT_IFACE="${OUT_NETWORK_INTERFACE:-}"
+    CONF_SNI="${SERVER_SNI:-rutube.ru}"
+    CONF_BYPASS="${BYPASS_METHOD:-sni-spoofing}"
+    CONF_BLACKLIST="${BLACKLIST_DOMAINS:-}"
+    CONF_EXCLUDE="${EXCLUDE_TUNNEL_NETWORKS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}"
+    CONF_INCLUDE="${INCLUDE_TUNNEL_NETWORKS:-}"
+    CONF_SPLIT="${SPLIT_TUNNEL:-no}"
+    CONF_SPLIT_MODE="${SPLIT_TUNNEL_MODE:-exclude}"
+    CONF_SPLIT_DOMAINS="${SPLIT_TUNNEL_DOMAINS:-}"
+    CONF_DISABLE_FALLBACK="${DISABLE_AUTO_FALLBACK:-no}"
+    CONF_MAX_RESTARTS="${MAX_FULL_RESTARTS:-15}"
+    CONF_STARTUP_DELAY="${STARTUP_RETRY_DELAY:-5}"
 fi
 
 cat << EOF > "$CONF_PATH"
@@ -438,7 +471,22 @@ PREFERRED_SERVER="${CONF_SERVERS}"
 TUN_INTERFACE="$USER_LTUN"
 # Должно совпадать с адресом, назначенным интерфейсу в KeeneticOS (шаг [3/7]).
 TUN_ADDRESS="$USER_TUN_IP"
-WATCHDOG="${CONF_WATCHDOG:-yes}"
+TUN_IPV6_ADDRESS="${CONF_TUN_IPV6}"
+TUN_MTU="${CONF_TUN_MTU}"
+GATEWAY_IP="${CONF_GATEWAY_IP}"
+GATEWAY_IPV6="${CONF_GATEWAY_IPV6}"
+OUT_NETWORK_INTERFACE="${CONF_OUT_IFACE}"
+SERVER_SNI="${CONF_SNI}"
+BYPASS_METHOD="${CONF_BYPASS}"
+BLACKLIST_DOMAINS="${CONF_BLACKLIST}"
+EXCLUDE_TUNNEL_NETWORKS="${CONF_EXCLUDE}"
+INCLUDE_TUNNEL_NETWORKS="${CONF_INCLUDE}"
+SPLIT_TUNNEL="${CONF_SPLIT}"
+SPLIT_TUNNEL_MODE="${CONF_SPLIT_MODE}"
+SPLIT_TUNNEL_DOMAINS="${CONF_SPLIT_DOMAINS}"
+DISABLE_AUTO_FALLBACK="${CONF_DISABLE_FALLBACK}"
+MAX_FULL_RESTARTS="${CONF_MAX_RESTARTS}"
+STARTUP_RETRY_DELAY="${CONF_STARTUP_DELAY}"
 WEB_PASSWORD="${CONF_PASS}"
 EOF
 chmod 600 "$CONF_PATH"
@@ -465,78 +513,9 @@ else
 fi
 chmod 755 /opt/etc/init.d/S53fptn-client
 
-# Скрипт донастройки интерфейса в ndm. Вызывается из S53fptn-client как POSTCMD
-# ровно одним словом — см. комментарий там же о том, почему набор команд нельзя
-# писать прямо в POSTCMD.
-if [ -f "$SCRIPT_DIR/fptn-ndm-setup.sh" ]; then
-    cp "$SCRIPT_DIR/fptn-ndm-setup.sh" "/opt/bin/fptn-ndm-setup.sh"
-else
-    if ! download_file "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-ndm-setup.sh" "/opt/bin/fptn-ndm-setup.sh" 30; then
-        echo "Ошибка: Не удалось скачать fptn-ndm-setup.sh / Error: Failed to download fptn-ndm-setup.sh"
-        exit 1
-    fi
-fi
-chmod 755 /opt/bin/fptn-ndm-setup.sh
-
-# 10. Настройка автопинг-наблюдателя (Watchdog) и планировщика задач / Install Watchdog & Cron
+# 8. Восстановление выполняется встроенным supervisor в fptn-client-cli.
 echo ""
-echo "[8/8] Настройка автопинг-наблюдателя / Setting up Watchdog & Cron..."
-if [ -f "$SCRIPT_DIR/fptn-watchdog.sh" ]; then
-    cp "$SCRIPT_DIR/fptn-watchdog.sh" "/opt/bin/fptn-watchdog.sh"
-else
-    if ! download_file "${GITHUB_RAW_BASE}/deploy/keenetic/fptn-watchdog.sh" "/opt/bin/fptn-watchdog.sh" 30; then
-        echo "Ошибка: Не удалось скачать watchdog-скрипт / Error: Failed to download watchdog script"
-        exit 1
-    fi
-fi
-chmod 755 /opt/bin/fptn-watchdog.sh
-sed -i "s/TUN_INTERFACE:-opkgtun[0-9]*/TUN_INTERFACE:-${USER_LTUN}/g" /opt/bin/fptn-watchdog.sh
-
-# Каталог для логов на накопителе. В /var/log писать нельзя: на KeeneticOS это
-# tmpfs, то есть ОЗУ роутера, и ротация логов съедала бы до 36 МБ памяти.
-mkdir -p /opt/var/log/fptn 2>/dev/null || true
-
-CRONTAB="/opt/etc/crontab"
-# Раз в 5 минут, а не в минуту: каждый запуск watchdog делает ping и чтение логов,
-# при интервале в минуту это заметный постоянный фон для процессора роутера.
-CRON_JOB="*/5 * * * * root /opt/bin/fptn-watchdog.sh"
-if [ -f "$CRONTAB" ]; then
-    # Убираем запись прежних версий (*/1), чтобы при обновлении не остались обе
-    if grep -q "fptn-watchdog.sh" "$CRONTAB"; then
-        sed -i '/fptn-watchdog\.sh/d' "$CRONTAB"
-    fi
-    echo "$CRON_JOB" >> "$CRONTAB"
-else
-    cat << EOF > "$CRONTAB"
-SHELL=/bin/sh
-PATH=/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# m h dom mon dow user  command
-$CRON_JOB
-EOF
-fi
-
-# Прежние версии установщика добавляли задание через `crontab -`, то есть в
-# пользовательский spool (/opt/var/spool/cron/crontabs/root). Правки только в
-# /opt/etc/crontab его не трогали, и на роутере оставалась старая запись с
-# интервалом */1 — в логе это видно как запуск watchdog каждую минуту.
-# Чистим оба места: здесь задание живёт в /opt/etc/crontab.
-if which crontab >/dev/null 2>&1; then
-    if crontab -l 2>/dev/null | grep -q "fptn-watchdog"; then
-        echo "Удаление старой записи watchdog из пользовательского crontab..."
-        crontab -l 2>/dev/null | grep -v "fptn-watchdog" | crontab - 2>/dev/null || true
-    fi
-fi
-for _spool in /opt/var/spool/cron/crontabs/root /var/spool/cron/crontabs/root; do
-    if [ -f "$_spool" ] && grep -q "fptn-watchdog" "$_spool"; then
-        sed -i '/fptn-watchdog/d' "$_spool"
-    fi
-done
-
-if [ -x "/opt/etc/init.d/S05cron" ]; then
-    /opt/etc/init.d/S05cron start >/dev/null 2>&1
-elif [ -x "/opt/etc/init.d/S10cron" ]; then
-    /opt/etc/init.d/S10cron start >/dev/null 2>&1
-fi
+echo "[8/8] Внешний watchdog и cron не устанавливаются: supervisor встроен в клиент."
 
 echo ""
 echo "==========================================================="

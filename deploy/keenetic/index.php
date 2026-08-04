@@ -39,7 +39,23 @@ $config = [
     'TOKEN' => '',
     'PREFERRED_SERVER' => '',
     'TUN_INTERFACE' => 'opkgtun1',
-    'WATCHDOG' => 'yes',
+    'TUN_ADDRESS' => '10.0.0.1',
+    'TUN_IPV6_ADDRESS' => '',
+    'TUN_MTU' => '1360',
+    'GATEWAY_IP' => '',
+    'GATEWAY_IPV6' => '',
+    'OUT_NETWORK_INTERFACE' => '',
+    'SERVER_SNI' => 'rutube.ru',
+    'BYPASS_METHOD' => 'sni-spoofing',
+    'BLACKLIST_DOMAINS' => '',
+    'EXCLUDE_TUNNEL_NETWORKS' => '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16',
+    'INCLUDE_TUNNEL_NETWORKS' => '',
+    'SPLIT_TUNNEL' => 'no',
+    'SPLIT_TUNNEL_MODE' => 'exclude',
+    'SPLIT_TUNNEL_DOMAINS' => '',
+    'DISABLE_AUTO_FALLBACK' => 'no',
+    'MAX_FULL_RESTARTS' => '15',
+    'STARTUP_RETRY_DELAY' => '5',
     'WEB_PASSWORD' => ''
 ];
 
@@ -607,33 +623,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $clean_servers = array_filter([$server]);
                     }
 
-                    // Проверяем живой сервер для стартового приоритета
-                    $servers_data = parse_servers_from_token($config['TOKEN'] ?? '');
-                    $working_server = '';
-                    if (!empty($clean_servers)) {
-                        foreach ($clean_servers as $srv_name) {
-                            foreach ($servers_data as $sd) {
-                                if ($sd['name'] === $srv_name) {
-                                    $fp = @fsockopen($sd['host'], (int)($sd['port'] ?? 443), $errno, $errstr, 0.8);
-                                    if ($fp) {
-                                        fclose($fp);
-                                        $working_server = $srv_name;
-                                        break 2;
-                                    }
-                                }
-                            }
-                        }
-                        // Если все выбранные оффлайн - берём первый в списке
-                        if (empty($working_server)) {
-                            $working_server = $clean_servers[0];
-                        }
-                    }
-
                     $fallback = isset($_POST['fallback_to_auto']) && $_POST['fallback_to_auto'] === '1' ? 'yes' : 'no';
-                    $config['PREFERRED_SERVER'] = $working_server ? $working_server : $server;
-                    $config['FALLBACK_TO_AUTO'] = $fallback;
+                    $config['PREFERRED_SERVER'] = $server;
+                    $config['DISABLE_AUTO_FALLBACK'] = $fallback === 'yes' ? 'no' : 'yes';
                     if (write_config()) {
-                        $message = 'Приоритет серверов сохранён: ' . ($working_server ? htmlspecialchars($working_server) : 'Автовыбор');
+                        $message = 'Приоритет серверов сохранён: ' . (!empty($server) ? htmlspecialchars($server) : 'Автовыбор');
                         
                         if ($service_running) {
                             $cmd = $init_script . " restart 2>&1";
@@ -645,13 +639,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 
-                elseif ($action === 'save_watchdog') {
-                    $watchdog = isset($_POST['watchdog']) && $_POST['watchdog'] === '1' ? 'yes' : 'no';
-                    $config['WATCHDOG'] = $watchdog;
+                elseif ($action === 'save_advanced') {
+                    $advanced_keys = [
+                        'TUN_ADDRESS', 'TUN_IPV6_ADDRESS', 'TUN_MTU', 'GATEWAY_IP',
+                        'GATEWAY_IPV6', 'OUT_NETWORK_INTERFACE', 'SERVER_SNI',
+                        'BYPASS_METHOD', 'BLACKLIST_DOMAINS', 'EXCLUDE_TUNNEL_NETWORKS',
+                        'INCLUDE_TUNNEL_NETWORKS', 'SPLIT_TUNNEL_MODE',
+                        'SPLIT_TUNNEL_DOMAINS', 'MAX_FULL_RESTARTS', 'STARTUP_RETRY_DELAY'
+                    ];
+                    foreach ($advanced_keys as $key) {
+                        if (isset($_POST[$key])) {
+                            $config[$key] = trim((string)$_POST[$key]);
+                        }
+                    }
+                    $config['SPLIT_TUNNEL'] = isset($_POST['SPLIT_TUNNEL']) ? 'yes' : 'no';
+                    $config['DISABLE_AUTO_FALLBACK'] = isset($_POST['DISABLE_AUTO_FALLBACK']) ? 'yes' : 'no';
+                    $config['TUN_MTU'] = (string)max(576, min(9000, (int)$config['TUN_MTU']));
+                    $config['MAX_FULL_RESTARTS'] = (string)max(0, min(1000, (int)$config['MAX_FULL_RESTARTS']));
+                    $config['STARTUP_RETRY_DELAY'] = (string)max(1, min(60, (int)$config['STARTUP_RETRY_DELAY']));
                     if (write_config()) {
-                        $message = 'Настройка автопинга (Watchdog) обновлена. Статус: ' . ($watchdog === 'yes' ? 'Включен' : 'Выключен');
+                        $message = 'Расширенные параметры клиента сохранены.';
+                        if ($service_running) {
+                            exec($init_script . " restart 2>&1", $restart_output, $restart_return);
+                            $message .= ' Служба перезапущена.';
+                        }
                     } else {
-                        $error = 'Не удалось записать конфигурацию.';
+                        $error = 'Не удалось записать расширенные параметры.';
                     }
                 }
                 
@@ -892,7 +905,7 @@ if (!empty($config['TOKEN'])) {
             font-weight: 500;
         }
         
-        input[type="text"], input[type="password"], select {
+        input:not([type]), input[type="text"], input[type="password"], input[type="number"], select, textarea {
             width: 100%;
             background-color: var(--bg-color);
             border: 1px solid var(--border-color);
@@ -904,7 +917,7 @@ if (!empty($config['TOKEN'])) {
             transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
         
-        input[type="text"]:focus, input[type="password"]:focus, select:focus {
+        input:not([type]):focus, input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus, select:focus, textarea:focus {
             outline: none;
             border-color: var(--accent-blue);
             box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
@@ -1399,7 +1412,7 @@ if (!empty($config['TOKEN'])) {
                                     <span style="font-size: 11px; color: var(--text-muted);">Если все выбранные сервера недоступны — временно уйти на наибыстрейший доступный сервер</span>
                                 </div>
                                 <label class="switch" style="position: relative; display: inline-block; width: 40px; height: 20px; flex-shrink: 0;">
-                                    <input type="checkbox" name="fallback_to_auto" value="1" <?php echo ($config['FALLBACK_TO_AUTO'] ?? 'yes') === 'yes' ? 'checked' : ''; ?> style="opacity: 0; width: 0; height: 0;">
+                                    <input type="checkbox" name="fallback_to_auto" value="1" <?php echo ($config['DISABLE_AUTO_FALLBACK'] ?? 'no') !== 'yes' ? 'checked' : ''; ?> style="opacity: 0; width: 0; height: 0;">
                                     <span class="slider round" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .3s; border-radius: 20px;"></span>
                                 </label>
                             </div>
@@ -1412,22 +1425,79 @@ if (!empty($config['TOKEN'])) {
                     <?php endif; ?>
 
                     <div style="border-top: 1px dashed var(--border-color); padding-top: 20px; margin-top: 20px;">
-                        <form method="POST">
-                            <input type="hidden" name="action" value="save_watchdog">
-                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
-                            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; background: rgba(59, 130, 246, 0.03); padding: 12px; border-radius: 10px; border: 1px solid var(--border-color);">
-                                <div>
-                                    <span style="font-weight: 600; font-size: 14px; display: block; color: var(--text-color);">Автопинг и переключение</span>
-                                    <span style="font-size: 11px; color: var(--text-muted); display: block; margin-top: 2px;">Перезапустит VPN на новый сервер, если текущий завис или упал</span>
-                                </div>
-                                <label class="switch" style="position: relative; display: inline-block; width: 44px; height: 22px; flex-shrink: 0;">
-                                    <input type="checkbox" name="watchdog" value="1" <?php echo $config['WATCHDOG'] === 'yes' ? 'checked' : ''; ?> onchange="this.form.submit()" style="opacity: 0; width: 0; height: 0;">
-                                    <span class="slider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #374151; transition: .3s; border-radius: 22px;"></span>
-                                </label>
-                            </div>
-                        </form>
+                        <div style="background: rgba(16, 185, 129, 0.06); padding: 12px; border-radius: 10px; border: 1px solid rgba(16, 185, 129, 0.25);">
+                            <span style="font-weight: 600; font-size: 14px; display: block; color: var(--text-color);">Встроенное восстановление соединения</span>
+                            <span style="font-size: 11px; color: var(--text-muted); display: block; margin-top: 2px;">Ожидание WAN, переподключение и fallback выполняет сам fptn-client-cli. Внешний watchdog и cron не используются.</span>
+                        </div>
                     </div>
                 </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 24px;">
+                <h2>Расширенная логика клиента</h2>
+                <form method="POST">
+                    <input type="hidden" name="action" value="save_advanced">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token']); ?>">
+
+                    <div class="form-group">
+                        <label for="client-sni">SNI для маскировки</label>
+                        <input id="client-sni" name="SERVER_SNI" value="<?php echo htmlspecialchars($config['SERVER_SNI']); ?>" placeholder="rutube.ru">
+                    </div>
+                    <div class="form-group">
+                        <label for="bypass-method">Метод обхода блокировок</label>
+                        <select id="bypass-method" name="BYPASS_METHOD">
+                            <?php foreach (['sni-spoofing', 'obfuscation', 'sni-spoofing-yandex-26-4', 'sni-spoofing-chrome-149', 'sni-spoofing-firefox-151', 'sni-spoofing-safari-26-5'] as $method): ?>
+                                <option value="<?php echo $method; ?>" <?php echo $config['BYPASS_METHOD'] === $method ? 'selected' : ''; ?>><?php echo htmlspecialchars($method); ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px;">
+                        <div class="form-group">
+                            <label for="tun-address">IPv4 TUN</label>
+                            <input id="tun-address" name="TUN_ADDRESS" value="<?php echo htmlspecialchars($config['TUN_ADDRESS']); ?>">
+                        </div>
+                        <div class="form-group">
+                            <label for="tun-ipv6">IPv6 TUN (необязательно)</label>
+                            <input id="tun-ipv6" name="TUN_IPV6_ADDRESS" value="<?php echo htmlspecialchars($config['TUN_IPV6_ADDRESS']); ?>">
+                        </div>
+                        <div class="form-group">
+                            <label for="tun-mtu">MTU</label>
+                            <input id="tun-mtu" type="number" min="576" max="9000" name="TUN_MTU" value="<?php echo htmlspecialchars($config['TUN_MTU']); ?>">
+                        </div>
+                        <div class="form-group">
+                            <label for="startup-delay">Повтор старта, сек.</label>
+                            <input id="startup-delay" type="number" min="1" max="60" name="STARTUP_RETRY_DELAY" value="<?php echo htmlspecialchars($config['STARTUP_RETRY_DELAY']); ?>">
+                        </div>
+                        <div class="form-group">
+                            <label for="max-restarts">Попыток до смены сервера</label>
+                            <input id="max-restarts" type="number" min="0" max="1000" name="MAX_FULL_RESTARTS" value="<?php echo htmlspecialchars($config['MAX_FULL_RESTARTS']); ?>">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="blacklist-domains">Блокируемые домены</label>
+                        <textarea id="blacklist-domains" name="BLACKLIST_DOMAINS" rows="3" placeholder="domain:example.com,domain:example.org"><?php echo htmlspecialchars($config['BLACKLIST_DOMAINS']); ?></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="exclude-networks">Подсети в обход VPN</label>
+                        <input id="exclude-networks" name="EXCLUDE_TUNNEL_NETWORKS" value="<?php echo htmlspecialchars($config['EXCLUDE_TUNNEL_NETWORKS']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label for="include-networks">Подсети только через VPN</label>
+                        <input id="include-networks" name="INCLUDE_TUNNEL_NETWORKS" value="<?php echo htmlspecialchars($config['INCLUDE_TUNNEL_NETWORKS']); ?>">
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" name="SPLIT_TUNNEL" <?php echo $config['SPLIT_TUNNEL'] === 'yes' ? 'checked' : ''; ?>> Включить split-tunnel по доменам</label>
+                        <select name="SPLIT_TUNNEL_MODE">
+                            <option value="exclude" <?php echo $config['SPLIT_TUNNEL_MODE'] === 'exclude' ? 'selected' : ''; ?>>Исключать указанные домены из VPN</option>
+                            <option value="include" <?php echo $config['SPLIT_TUNNEL_MODE'] === 'include' ? 'selected' : ''; ?>>Только указанные домены через VPN</option>
+                        </select>
+                        <textarea name="SPLIT_TUNNEL_DOMAINS" rows="3" placeholder="domain:example.com,domain:example.org"><?php echo htmlspecialchars($config['SPLIT_TUNNEL_DOMAINS']); ?></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" name="DISABLE_AUTO_FALLBACK" <?php echo $config['DISABLE_AUTO_FALLBACK'] === 'yes' ? 'checked' : ''; ?>> Не переходить в автовыбор при отказе приоритетных серверов</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Сохранить расширенные настройки</button>
+                </form>
             </div>
 
             <!-- Карточка токена -->
