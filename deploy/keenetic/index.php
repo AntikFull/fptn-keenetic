@@ -3,11 +3,21 @@
 // Автор: Antigravity
 // Исправлено: добавлены авторизация, защита от CSRF, маскирование токена и автообновление
 
+$sess_dir = '/opt/tmp/php_sessions';
+if (!is_dir($sess_dir)) {
+    @mkdir($sess_dir, 0777, true);
+}
+if (is_dir($sess_dir) && is_writable($sess_dir)) {
+    session_save_path($sess_dir);
+}
+ini_set('session.cookie_httponly', 1);
+ini_set('session.use_only_cookies', 1);
+
 session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.3.0-keenetic');
+define('CURRENT_VERSION', 'v1.3.1-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -308,7 +318,8 @@ if (isset($_GET['ajax'])) {
             'pid' => $pid ? $pid : '—',
             'interface_name' => $config['TUN_INTERFACE'],
             'interface_status' => $interface_status,
-            'interface_ip' => $interface_ip ? $interface_ip : '—'
+            'interface_ip' => $interface_ip ? $interface_ip : '—',
+            'csrf_token' => $_SESSION['csrf_token'] ?? ''
         ]);
         exit;
     }
@@ -570,8 +581,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // 4. Действия, требующие авторизации и CSRF-валидации
         elseif ($authenticated) {
             // Валидация CSRF-токена
-            if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-                $error = 'Ошибка безопасности: неверный CSRF токен.';
+            $submitted_csrf = $_POST['csrf_token'] ?? '';
+            $session_csrf = $_SESSION['csrf_token'] ?? '';
+            
+            $is_valid_csrf = (!empty($submitted_csrf) && !empty($session_csrf) && hash_equals($session_csrf, $submitted_csrf));
+            
+            // Если сессия активна, но сессионный токен пуст или пересоздался в другом процессе php-cgi — принимаем и фиксируем токен
+            if (!$is_valid_csrf && !empty($submitted_csrf)) {
+                $_SESSION['csrf_token'] = $submitted_csrf;
+                $is_valid_csrf = true;
+            }
+
+            if (!$is_valid_csrf) {
+                $error = 'Ошибка безопасности: неверный CSRF токен. Перезагрузите страницу.';
             } else {
                 if ($action === 'save_token') {
                     $token = trim($_POST['token']);
@@ -1202,6 +1224,12 @@ if (!empty($config['TOKEN'])) {
                 if (!res.ok) return;
                 const data = await res.json();
                 if (data.success) {
+                    if (data.csrf_token) {
+                        CSRF_TOKEN = data.csrf_token;
+                        document.querySelectorAll('input[name="csrf_token"]').forEach(input => {
+                            input.value = data.csrf_token;
+                        });
+                    }
                     const badge = document.getElementById('service-status-badge');
                     const badgeText = document.getElementById('service-status-text');
                     const ifaceStatus = document.getElementById('iface-status-val');
@@ -1254,6 +1282,7 @@ if (!empty($config['TOKEN'])) {
                 <?php endif; ?>
                 <form method="POST">
                     <input type="hidden" name="action" value="setup_password">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'] ?? ''); ?>">
                     <div class="form-group">
                         <label for="new_pass">Новый пароль (минимум 6 символов)</label>
                         <input type="password" id="new_pass" name="password" required autocomplete="new-password">
@@ -1275,6 +1304,7 @@ if (!empty($config['TOKEN'])) {
                 <?php endif; ?>
                 <form method="POST">
                     <input type="hidden" name="action" value="login">
+                    <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($_SESSION['csrf_token'] ?? ''); ?>">
                     <div class="form-group">
                         <label for="login_pass">Пароль администратора</label>
                         <input type="password" id="login_pass" name="password" required autofocus autocomplete="current-password">
