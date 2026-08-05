@@ -45,7 +45,7 @@ jobs:
             cc: mipsel-linux-gnu-gcc
             cxx: mipsel-linux-gnu-g++
             strip: mipsel-linux-gnu-strip
-            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2", "-fcoroutines"]'
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
             linkflags: '[]'
 
@@ -84,7 +84,7 @@ jobs:
           compiler=gcc
           compiler.version=11
           compiler.libcxx=libstdc++11
-          compiler.cppstd=gnu17
+          compiler.cppstd=gnu20
           build_type=Release
 
           [buildenv]
