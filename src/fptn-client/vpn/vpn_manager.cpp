@@ -296,7 +296,7 @@ void VpnManager::Supervise() {
   while (running_) {
     {
       std::unique_lock<std::mutex> lock(reconnect_mutex_);
-      reconnect_cv_.wait_for(lock, std::chrono::milliseconds(500),
+      reconnect_cv_.wait_for(lock, std::chrono::milliseconds(2000),
           [this]() { return !running_ || !config_.http_client->IsStarted(); });
     }
     if (!running_) {
