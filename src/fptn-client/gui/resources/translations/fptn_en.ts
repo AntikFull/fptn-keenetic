@@ -20,6 +20,10 @@
             <translation>Connecting...</translation>
         </message>
         <message>
+            <source>Reconnecting...</source>
+            <translation>Reconnecting...</translation>
+        </message>
+        <message>
             <source>Disconnecting...</source>
             <translation>Disconnecting...</translation>
         </message>
@@ -284,6 +288,30 @@ This may cause network connectivity issues or prevent proper operation of FPTN.<
             <translation>Traffic masking (obfuscation)</translation>
         </message>
         <message>
+            <source>Connection strategy</source>
+            <translation>Connection strategy</translation>
+        </message>
+        <message>
+            <source>Persistent tunnel</source>
+            <translation>Persistent tunnel</translation>
+        </message>
+        <message>
+            <source>Rolling tunnel</source>
+            <translation>Rolling tunnel</translation>
+        </message>
+        <message>
+            <source>Dual rolling tunnel</source>
+            <translation>Dual rolling tunnel</translation>
+        </message>
+        <message>
+            <source>Triple rolling tunnel</source>
+            <translation>Triple rolling tunnel</translation>
+        </message>
+        <message>
+            <source>Browser mimicry (experimental)</source>
+            <translation>Browser mimicry (experimental)</translation>
+        </message>
+        <message>
             <source>SNI-REALITY (Generic)</source>
             <translation>Domain spoofing (default)</translation>
         </message>
@@ -445,6 +473,14 @@ This may cause network connectivity issues or prevent proper operation of FPTN.<
         <message>
             <source>Blacklist domains</source>
             <translation>Blacklist domains</translation>
+        </message>
+        <message>
+            <source>Custom DNS</source>
+            <translation>Custom DNS</translation>
+        </message>
+        <message>
+            <source>Please enter a valid DNS IPv4 address or enable Auto.</source>
+            <translation>Please enter a valid DNS IPv4 address or enable Auto.</translation>
         </message>
         <message>
             <source>Completely block access to the main domain AND all its subdomains. Format: domain:example.com (one per line)</source>

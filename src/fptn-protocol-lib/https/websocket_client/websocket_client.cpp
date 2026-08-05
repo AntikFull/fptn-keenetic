@@ -7,7 +7,6 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include "fptn-protocol-lib/https/websocket_client/websocket_client.h"
 
 #include <https/utils/change_cipher_spec.h>
-#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
@@ -21,15 +20,25 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 
 #include "fptn-protocol-lib/https/api_client/api_client.h"
 #include "fptn-protocol-lib/https/obfuscator/methods/tls2/tls_obfuscator2.h"
+#include "fptn-protocol-lib/protocol/yaff/yaff_serializer.h"
 
-#if defined(__APPLE__) || (defined(__linux__) && !defined(__ANDROID__))
+#ifdef __APPLE__
+#include <TargetConditionals.h>
 #include <netinet/tcp.h>
+#elif defined(__linux__) && !defined(__ANDROID__)
+#include <netinet/tcp.h>
+#endif
+
+#ifdef _WIN32
+#include <mstcpip.h>  // NOLINT(build/include_order)
 #endif
 
 namespace fptn::protocol::https {
 
-WebsocketClient::WebsocketClient(Config config, int thread_number)
-    : ioc_(thread_number),
+WebsocketClient::WebsocketClient(std::string jwt_access_token,
+    ConnectionConfig config,
+    boost::asio::io_context& ioc)
+    : ioc_(ioc),
       ctx_(https::utils::CreateNewSslCtx()),
       resolver_(boost::asio::make_strand(ioc_)),
       strand_(boost::asio::make_strand(ioc_)),
@@ -38,15 +47,17 @@ WebsocketClient::WebsocketClient(Config config, int thread_number)
           obfuscator_socket_type(boost::asio::make_strand(ioc_), nullptr),
           ctx_)),
       write_channel_(strand_, kMaxSizeOutQueue_),
+      jwt_access_token_(std::move(jwt_access_token)),
       config_(std::move(config)) {
   auto* ssl = ws_.next_layer().native_handle();
-  https::utils::SetHandshakeSni(ssl, config_.sni);
+  https::utils::SetHandshakeSni(ssl, config_.common.sni);
   https::utils::SetHandshakeSessionID(ssl);
 
   // Set SSL buffer sizes
   SSL_set_mode(ssl, SSL_MODE_RELEASE_BUFFERS);
 
-  if (config_.censorship_strategy == CensorshipStrategy::kTlsObfuscator) {
+  if (config_.common.censorship_strategy ==
+      CensorshipStrategy::kTlsObfuscator) {
     obfuscator_ =
         std::make_shared<fptn::protocol::https::obfuscator::TlsObfuscator2>();
     ws_.next_layer().next_layer().set_obfuscator(obfuscator_);
@@ -54,14 +65,14 @@ WebsocketClient::WebsocketClient(Config config, int thread_number)
 
   https::utils::AttachCertificateVerificationCallback(
       ssl, [this](const std::string& md5_fingerprint) mutable {
-        if (config_.expected_md5_fingerprint.empty()) {
+        if (config_.common.md5_fingerprint.empty()) {
           return true;
         }
-        if (md5_fingerprint == config_.expected_md5_fingerprint) {
+        if (md5_fingerprint == config_.common.md5_fingerprint) {
           return true;
         }
         SPDLOG_ERROR("Certificate MD5 mismatch. Expected: {}, got: {}.",
-            config_.expected_md5_fingerprint, md5_fingerprint);
+            config_.common.md5_fingerprint, md5_fingerprint);
         return false;
       });
 
@@ -79,18 +90,8 @@ WebsocketClient::~WebsocketClient() {
   } catch (...) {
     SPDLOG_WARN("Unknown error in ~WebsocketClient");
   }
-
-  // Stop io_context
-  try {
-    if (!ioc_.stopped()) {
-      SPDLOG_INFO("Stopping io_context...");
-      ioc_.stop();
-    }
-  } catch (const boost::system::system_error& err) {
-    SPDLOG_ERROR("Exception while stopping io_context: {}", err.what());
-  } catch (...) {
-    SPDLOG_ERROR("Unknown exception while stopping io_context");
-  }
+  // NOTE: io_context is owned externally (by the connection strategy) and
+  // shared across pooled clients, so it must NOT be stopped here.
   SPDLOG_INFO("WebsocketClient removed");
 }
 
@@ -100,9 +101,12 @@ void WebsocketClient::Run() {
     return;
   }
 
-  SPDLOG_INFO("Connecting to {}:{} [strategy={}]", config_.server_ip.ToString(),
-      config_.server_port, ToString(config_.censorship_strategy));
+  SPDLOG_INFO("Connecting to {}:{} [strategy={}]",
+      config_.common.server_ip.ToString(), config_.common.server_port,
+      ToString(config_.common.censorship_strategy));
 
+  // The io_context is owned and driven by the connection strategy, so we only
+  // schedule the connection coroutine here and return immediately.
   auto self = weak_from_this();
   boost::asio::co_spawn(
       ioc_,
@@ -115,25 +119,6 @@ void WebsocketClient::Run() {
         }
       },
       boost::asio::detached);
-  try {
-    // Блокирующая обработка событий. Прежний вариант вызывал неблокирующий
-    // ioc_.poll_one() в цикле с задержкой 1 мс, то есть примерно 2000 системных
-    // вызовов в секунду даже при полном простое туннеля — на процессоре роутера
-    // это был основной постоянный потребитель CPU.
-    // run_one() блокируется до появления события и возвращает 0 только тогда,
-    // когда работы больше нет и появиться она не может, то есть сессия
-    // завершена, а также после ioc_.stop() из Stop().
-    while (running_ || !was_stopped_) {
-      if (ioc_.stopped()) {
-        break;
-      }
-      if (ioc_.run_one() == 0) {
-        break;
-      }
-    }
-  } catch (...) {
-    SPDLOG_WARN("Exception while running");
-  }
 }
 
 bool WebsocketClient::Stop() {
@@ -252,15 +237,6 @@ bool WebsocketClient::Stop() {
   }
 
   was_stopped_ = true;
-
-  // Разблокируем Run(): он ждёт события в ioc_.run_one() и без этого вызова
-  // остался бы заблокированным, если у io_context ещё есть отложенная работа.
-  try {
-    ioc_.stop();
-  } catch (...) {
-    SPDLOG_WARN("Unknown exception while stopping io_context");
-  }
-
   SPDLOG_INFO("WebSocket client stopped successfully");
 
   return true;
@@ -279,6 +255,8 @@ bool WebsocketClient::Send(fptn::common::network::IPPacketPtr packet) {
 }
 
 bool WebsocketClient::IsStarted() const { return running_ && was_connected_; }
+
+bool WebsocketClient::IsStopped() const { return was_stopped_; }
 
 boost::asio::awaitable<bool> WebsocketClient::RunInternal() {
   try {
@@ -316,9 +294,16 @@ boost::asio::awaitable<bool> WebsocketClient::RunInternal() {
         strand_, [self]() { return self->RunSender(); }, boost::asio::detached);
 
     SPDLOG_INFO("WebSocket connection established successfully");
+    SPDLOG_INFO("Using serializer: yaff");
 
-    if (config_.on_connected_callback) {
-      config_.on_connected_callback();
+    if (config_.common.on_connected_callback) {
+      config_.common.on_connected_callback();
+    }
+
+    if (config_.common.on_socket_opened_callback) {
+      const int fd = static_cast<int>(
+          boost::beast::get_lowest_layer(ws_).socket().native_handle());
+      config_.common.on_socket_opened_callback(fd);
     }
 
     co_return true;
@@ -336,9 +321,9 @@ boost::asio::awaitable<bool> WebsocketClient::Connect() {
 
     // DNS resolution
     boost::beast::get_lowest_layer(ws_).expires_after(std::chrono::seconds(5));
-    const auto server_port_str = std::to_string(config_.server_port);
+    const auto server_port_str = std::to_string(config_.common.server_port);
     const auto results = co_await resolver_.async_resolve(
-        config_.server_ip.ToString(), server_port_str,
+        config_.common.server_ip.ToString(), server_port_str,
         boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     if (ec) {
       SPDLOG_ERROR("Resolve error: {}", ec.message());
@@ -375,15 +360,13 @@ boost::asio::awaitable<bool> WebsocketClient::Connect() {
 
     socket.set_option(boost::asio::socket_base::keep_alive(true));
 
-#ifdef __APPLE__
-    // Darwin-specific TCP keepalive fine-tuning.
-    // Kernel probes run during device sleep — no app CPU needed.
+#if defined(__APPLE__) && TARGET_OS_OSX
     {
-      const int fd = socket.native_handle();
-      const int keepidle = 5;   // idle seconds before first probe
-      const int keepintvl = 2;  // seconds between probes
-      const int keepcnt = 3;    // probe count before declaring dead
-      const int rxt_droptime = 10;
+      int fd = socket.native_handle();
+      int keepidle = 5;
+      int keepintvl = 2;
+      int keepcnt = 3;
+      int rxt_droptime = 10;
       setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepidle, sizeof(keepidle));
       setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
       setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
@@ -391,20 +374,28 @@ boost::asio::awaitable<bool> WebsocketClient::Connect() {
           sizeof(rxt_droptime));
     }
 #elif defined(__linux__) && !defined(__ANDROID__)
-    // Без этих опций молча оборванное соединение (типовая ситуация за PPPoE и
-    // CGNAT) висит до системного дефолта, а это порядка двух часов. Блок был
-    // потерян при переносе на Keenetic — здесь он нужнее, чем где-либо ещё.
     {
-      const int fd = socket.native_handle();
-      const int keepidle = 5;
-      const int keepintvl = 2;
-      const int keepcnt = 3;
-      const int user_timeout = 10000;
+      int fd = socket.native_handle();
+      int keepidle = 5;
+      int keepintvl = 2;
+      int keepcnt = 3;
+      int user_timeout = 10000;
       setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
       setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
       setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
       setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &user_timeout,
           sizeof(user_timeout));
+    }
+#elif defined(_WIN32)
+    {
+      SOCKET s = socket.native_handle();
+      tcp_keepalive ka = {1, 4000, 1000};
+      DWORD bytes = 0;
+      WSAIoctl(s, SIO_KEEPALIVE_VALS, &ka, sizeof(ka), nullptr, 0, &bytes,
+          nullptr, nullptr);
+      DWORD maxrt = 10;
+      setsockopt(s, IPPROTO_TCP, TCP_MAXRT,
+          reinterpret_cast<const char*>(&maxrt), sizeof(maxrt));
     }
 #endif
 
@@ -424,7 +415,7 @@ boost::asio::awaitable<bool> WebsocketClient::Connect() {
     // packet inspection Then resets the connection state and activates
     // obfuscation for the real encrypted tunnel This dual-handshake approach
     // makes traffic analysis significantly more difficult
-    if (IsRealityModeWithFakeHandshake(config_.censorship_strategy)) {
+    if (IsRealityModeWithFakeHandshake(config_.common.censorship_strategy)) {
       const bool status = co_await PerformFakeHandshake2();
       if (!status) {
         co_return false;
@@ -493,12 +484,26 @@ boost::asio::awaitable<bool> WebsocketClient::Connect() {
     // WebSocket handshake
     ws_.set_option(boost::beast::websocket::stream_base::decorator(
         [this](boost::beast::websocket::request_type& req) {
-          req.set("Authorization", "Bearer " + config_.access_token);
+          req.set("Authorization", "Bearer " + jwt_access_token_);
+          req.set("X-Serializer", "yaff");
           req.set("Client-Agent",
               fmt::format("FptnClient({}/{})", FPTN_USER_OS, FPTN_VERSION));
+          // Present only for pooled connections; groups them server-side.
+          if (!config_.common.session_id.empty()) {
+            req.set("SessionID", config_.common.session_id);
+          }
+          // Pool scheduling: tells the server this connection's send window and
+          // lifetime so it can route downstream to receivers and expire it.
+          if (config_.common.send_duration_ms > 0) {
+            req.set("X-Send-Duration",
+                std::to_string(config_.common.send_duration_ms));
+          }
+          if (config_.common.ttl_ms > 0) {
+            req.set("X-Ttl", std::to_string(config_.common.ttl_ms));
+          }
         }));
     // Websocket handshake
-    co_await ws_.async_handshake(config_.server_ip.ToString(),
+    co_await ws_.async_handshake(config_.common.server_ip.ToString(),
         common::api::kApiWebSocketUrl,
         boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     if (ec) {
@@ -545,7 +550,7 @@ boost::asio::awaitable<bool> WebsocketClient::ReceiveIPAssignment() {
       co_return false;
     }
 
-    const auto ip_pair = protobuf::DeserializeIPAssignmentMessage(
+    const auto ip_pair = fptn::protocol::yaff::DeserializeIPAssignmentMessage(
         boost::beast::buffers_to_string(buffer.data()));
 
     if (!ip_pair.has_value()) {
@@ -560,11 +565,8 @@ boost::asio::awaitable<bool> WebsocketClient::ReceiveIPAssignment() {
     }
 
     ip_assigned_ = true;
-    {
-      const std::lock_guard<std::mutex> lock(mutex_);
-      assigned_ipv4_ = common::network::IPv4Address(ipv4_str);
-      assigned_ipv6_ = common::network::IPv6Address(ipv6_str);
-    }
+    assigned_ipv4_ = common::network::IPv4Address(ipv4_str);
+    assigned_ipv6_ = common::network::IPv6Address(ipv6_str);
 
     SPDLOG_INFO("Received IP assignment from server: IPv4={}, IPv6={}",
         ipv4_str, ipv6_str);
@@ -603,44 +605,23 @@ boost::asio::awaitable<void> WebsocketClient::RunReader() {
       ++inbound_batches;  // [diag]
 
       auto batch_packets =
-          fptn::protocol::protobuf::DeserializeBatchIPPacket(buffer);
+          fptn::protocol::yaff::DeserializeBatchIPPacket(buffer);
       if (!batch_packets.empty()) {
         for (auto& raw_ip_opt : batch_packets) {
           auto packet =
               fptn::common::network::IPPacket::Parse(std::move(raw_ip_opt));
-          if (running_ && packet && config_.new_ip_pkt_callback) {
-            // Получателем всегда становится адрес туннельного интерфейса —
-            // тот же, что назначен ядру. Выданный сервером assigned_ipv4_
-            // используется только как отправитель исходящих (см. RunSender).
-            //
-            // Раньше здесь была развилка: при значении адреса, равном
-            // дефолтному, получателем ставился assigned_ipv4_. На роутере это
-            // ломало NAT — ndm транслирует трафик LAN в адрес интерфейса, и
-            // обратный пакет с чужим получателем conntrack уже не сопоставляет,
-            // то есть ответы не доходят вообще.
-            common::network::IPv4Address target_ipv4;
-            common::network::IPv6Address target_ipv6;
-            {
-              const std::lock_guard<std::mutex> lock(mutex_);
-              target_ipv4 = config_.tun_interface_address_ipv4;
-              target_ipv6 = config_.tun_interface_address_ipv6;
-            }
+          if (running_ && packet && config_.common.recv_ip_packet_callback) {
             // change IP addresses
-            // Пересчёт контрольных сумм выполняют сами сеттеры
-            // (IPPacket::SetDst*Address), отдельный вызов
-            // ComputeCalculateFields() дублировал его на каждом пакете.
             if (packet->IsIPv4()) {
-              if (!target_ipv4.IsEmpty()) {
-                packet->SetDstIPv4Address(target_ipv4);
-              }
+              packet->SetDstIPv4Address(
+                  config_.common.tun_interface_address_ipv4);
             } else if (packet->IsIPv6()) {
-              if (!target_ipv6.IsEmpty()) {
-                packet->SetDstIPv6Address(target_ipv6);
-              }
+              packet->SetDstIPv6Address(
+                  config_.common.tun_interface_address_ipv6);
             } else {
               continue;
             }
-            config_.new_ip_pkt_callback(std::move(packet));
+            config_.common.recv_ip_packet_callback(std::move(packet));
           }
         }
       }
@@ -696,8 +677,8 @@ boost::asio::awaitable<void> WebsocketClient::RunSender() {
         }
       }
       if (!packets.empty()) {
-        auto batch_data = fptn::protocol::protobuf::SerializeBatchIPPacket(
-            std::move(packets));
+        auto batch_data =
+            fptn::protocol::yaff::SerializeBatchIPPacket(std::move(packets));
         if (batch_data.has_value()) {
           co_await ws_.async_write(boost::asio::buffer(batch_data.value()),
               boost::asio::redirect_error(boost::asio::use_awaitable, ec));
@@ -727,12 +708,13 @@ boost::asio::awaitable<bool> WebsocketClient::PerformFakeHandshake2() {
     auto& tcp_layer = boost::beast::get_lowest_layer(ws_);
     auto& tcp_socket = tcp_layer.socket();
 
-    SPDLOG_INFO("Fake TLS handshake started for SNI: {}", config_.sni);
+    SPDLOG_INFO("Fake TLS handshake started for SNI: {}", config_.common.sni);
 
     /* Send client hello */
     const auto client_hello = GenerateHandshakePacket();
     if (client_hello.empty()) {
-      SPDLOG_WARN("Failed to generate ClientHello for SNI: {}", config_.sni);
+      SPDLOG_WARN(
+          "Failed to generate ClientHello for SNI: {}", config_.common.sni);
       co_return false;
     }
     const std::size_t client_hello_bytes_size =
@@ -740,8 +722,8 @@ boost::asio::awaitable<bool> WebsocketClient::PerformFakeHandshake2() {
             boost::asio::buffer(client_hello),
             boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     if (ec) {
-      SPDLOG_ERROR(
-          "Failed to send ClientHello to {}: {}", config_.sni, ec.message());
+      SPDLOG_ERROR("Failed to send ClientHello to {}: {}", config_.common.sni,
+          ec.message());
       co_return false;
     }
     if (client_hello_bytes_size != client_hello.size()) {
@@ -750,12 +732,16 @@ boost::asio::awaitable<bool> WebsocketClient::PerformFakeHandshake2() {
       co_return false;
     }
 
-    /* Wait for server answer */
+    /* Wait for server answer. On a handshake-cache miss the server fetches the
+     * real ServerHello from the decoy domain (up to 5s) and falls back to the
+     * default domain (5s more), so the client must outwait that worst case —
+     * with 1.5s here every cold-cache connection died before the server could
+     * possibly answer. */
     const auto server_hello =
         co_await common::network::WaitForServerTlsHelloAsync(
-            tcp_socket, std::chrono::milliseconds(1500));
+            tcp_socket, std::chrono::seconds(2));
     if (!server_hello.has_value()) {
-      SPDLOG_ERROR("Failed to receive ServerHello from {}", config_.sni);
+      SPDLOG_ERROR("Failed to receive ServerHello from {}", config_.common.sni);
       co_return false;
     }
 
@@ -767,8 +753,8 @@ boost::asio::awaitable<bool> WebsocketClient::PerformFakeHandshake2() {
             boost::asio::buffer(change_cipher_spec),
             boost::asio::redirect_error(boost::asio::use_awaitable, ec));
     if (ec) {
-      SPDLOG_ERROR(
-          "Failed to send ClientHello to {}: {}", config_.sni, ec.message());
+      SPDLOG_ERROR("Failed to send ClientHello to {}: {}", config_.common.sni,
+          ec.message());
       co_return false;
     }
     if (change_cipher_spec_size != change_cipher_spec.size()) {
@@ -784,11 +770,11 @@ boost::asio::awaitable<bool> WebsocketClient::PerformFakeHandshake2() {
 
     SPDLOG_INFO(
         "Fake TLS handshake completed for {}, received {} bytes from server",
-        config_.sni, server_hello.value().size());
+        config_.common.sni, server_hello.value().size());
     co_return true;
   } catch (const std::exception& e) {
-    SPDLOG_ERROR(
-        "Fake TLS handshake exception for {}: {}", config_.sni, e.what());
+    SPDLOG_ERROR("Fake TLS handshake exception for {}: {}", config_.common.sni,
+        e.what());
   }
   co_return false;
 }
@@ -821,7 +807,7 @@ void WebsocketClient::StartWatchdog() {
 
 std::vector<std::uint8_t> WebsocketClient::GenerateHandshakePacket() const {
   auto builder = camouflage::tls::Builder::Create();
-  switch (config_.censorship_strategy) {
+  switch (config_.common.censorship_strategy) {
     /* Chrome */
     case CensorshipStrategy::kSniRealityModeChrome149:
       SPDLOG_INFO("Selected strategy: Chrome 149");
@@ -892,25 +878,27 @@ std::vector<std::uint8_t> WebsocketClient::GenerateHandshakePacket() const {
           camouflage::tls::yandex_browser::Version::kV_24_12_0_1772);
       break;
     default:
-      SPDLOG_DEBUG("Using fallback handshake generator for SNI: {}", sni_);
-      return utils::GenerateDecoyTlsHandshake(config_.sni);
+      SPDLOG_DEBUG(
+          "Using fallback handshake generator for SNI: {}", config_.common.sni);
+      return utils::GenerateDecoyTlsHandshake(config_.common.sni);
   }
 
   const auto session_id = utils::GenerateDecoyTlsSessionId2();
   if (!session_id.has_value()) {
     SPDLOG_WARN("Session ID generation failed");
-    return utils::GenerateDecoyTlsHandshake(config_.sni);
+    return utils::GenerateDecoyTlsHandshake(config_.common.sni);
   }
 
-  const auto handshake =
-      builder.SetSNI(config_.sni).SetSessionId(session_id.value()).Generate();
+  const auto handshake = builder.SetSNI(config_.common.sni)
+                             .SetSessionId(session_id.value())
+                             .Generate();
   if (!handshake.has_value()) {
-    SPDLOG_WARN(
-        "Handshake generation failed for SNI: {}, using fallback", config_.sni);
-    return utils::GenerateDecoyTlsHandshake(config_.sni);
+    SPDLOG_WARN("Handshake generation failed for SNI: {}, using fallback",
+        config_.common.sni);
+    return utils::GenerateDecoyTlsHandshake(config_.common.sni);
   }
 
-  SPDLOG_INFO("Handshake generated: SNI={}, size={} bytes", config_.sni,
+  SPDLOG_INFO("Handshake generated: SNI={}, size={} bytes", config_.common.sni,
       handshake->handshake_packet_size);
 
   return std::vector<std::uint8_t>(handshake->handshake_packet,

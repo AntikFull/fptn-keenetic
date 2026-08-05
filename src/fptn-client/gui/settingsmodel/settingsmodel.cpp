@@ -229,11 +229,11 @@ void SettingsModel::Load(bool dont_load_server) {
     bypass_method_ = service_obj["bypass_method"].toString();
   }
 
-  // /* Replace DEPRECATED METHODS */
-  // if (bypass_method_ == kBypassMethodSni ||
-  //     bypass_method_ == kBypassMethodSniReality) {
-  //   bypass_method_ = kBypassMethodSniRealityYandex25;
-  // }
+  /* Replace DEPRECATED METHODS */
+  if (bypass_method_ == kBypassMethodSni ||
+      bypass_method_ == kBypassMethodSniReality) {
+    bypass_method_ = kBypassMethodSniRealityYandex26_4;
+  }
 
   if (bypass_method_.isEmpty() ||
       (bypass_method_ != kBypassMethodSni &&
@@ -257,7 +257,17 @@ void SettingsModel::Load(bool dont_load_server) {
           /* Safari */
           bypass_method_ != kBypassMethodSniRealitySafari26_5 &&
           bypass_method_ != kBypassMethodSniRealitySafari26_4)) {
-    bypass_method_ = kBypassMethodSniRealityYandex25;  // BYDEFAULT
+    bypass_method_ = kBypassMethodSniRealityYandex26_4;  // BYDEFAULT
+  }
+
+  if (service_obj.contains("connection_strategy")) {
+    connection_strategy_ = service_obj["connection_strategy"].toString();
+  }
+  if (connection_strategy_ != kConnectionStrategyPersistent &&
+      connection_strategy_ != kConnectionStrategyRolling &&
+      connection_strategy_ != kConnectionStrategyDual &&
+      connection_strategy_ != kConnectionStrategyTriple) {
+    connection_strategy_ = kConnectionStrategyDual;
   }
 
   if (service_obj.contains("blacklist_domains")) {
@@ -302,6 +312,15 @@ void SettingsModel::Load(bool dont_load_server) {
     split_tunnel_domains_ =
         "domain:ru,domain:su,domain:рф,domain:vk.com,domain:yandex.com,"
         "domain:userapi.com,domain:yandex.net,domain:clstorage.net";
+  }
+
+  if (service_obj.contains("custom_dns")) {
+    custom_dns_ = service_obj["custom_dns"].toString();
+  }
+  if (!custom_dns_.isEmpty() &&
+      !fptn::common::network::IPv4Address(custom_dns_.toStdString())
+           .IsValid()) {
+    custom_dns_.clear();
   }
 }
 
@@ -404,6 +423,7 @@ bool SettingsModel::Save() {
   json_object["autostart"] = client_autostart_ ? 1 : 0;
   json_object["sni"] = sni_;
   json_object["bypass_method"] = bypass_method_;
+  json_object["connection_strategy"] = connection_strategy_;
 
 #if _WIN32
   json_object["enable_advanced_dns_management"] =
@@ -416,6 +436,7 @@ bool SettingsModel::Save() {
   json_object["enable_split_tunnel"] = enable_split_tunnel_;
   json_object["split_tunnel_mode"] = split_tunnel_mode_;
   json_object["split_tunnel_domains"] = split_tunnel_domains_;
+  json_object["custom_dns"] = custom_dns_;
 
   QJsonDocument document(json_object);
   auto len = file.write(document.toJson());
@@ -538,11 +559,22 @@ int SettingsModel::GetExistServiceIndex(const QString& name) const {
 }
 
 QString SettingsModel::BypassMethod() const {
-  return bypass_method_.isEmpty() ? kBypassMethodSni : bypass_method_;
+  return bypass_method_.isEmpty() ? kBypassMethodSniRealityYandex26_4
+                                  : bypass_method_;
 }
 
 void SettingsModel::SetBypassMethod(const QString& method) {
   bypass_method_ = method;
+  Save();
+}
+
+QString SettingsModel::ConnectionStrategy() const {
+  return connection_strategy_.isEmpty() ? kConnectionStrategyDual
+                                        : connection_strategy_;
+}
+
+void SettingsModel::SetConnectionStrategy(const QString& strategy) {
+  connection_strategy_ = strategy;
   Save();
 }
 
@@ -611,6 +643,19 @@ QVector<QString> SettingsModel::SplitTunnelDomains() {
 
 void SettingsModel::SetSplitTunnelDomains(const QVector<QString>& domains) {
   split_tunnel_domains_ = JoinVectorToString(domains);
+  Save();
+}
+
+QString SettingsModel::CustomDns() const { return custom_dns_; }
+
+void SettingsModel::SetCustomDns(const QString& dns) {
+  const QString trimmed = dns.trimmed();
+  if (trimmed.isEmpty() ||
+      fptn::common::network::IPv4Address(trimmed.toStdString()).IsValid()) {
+    custom_dns_ = trimmed;
+  } else {
+    custom_dns_.clear();
+  }
   Save();
 }
 #if _WIN32

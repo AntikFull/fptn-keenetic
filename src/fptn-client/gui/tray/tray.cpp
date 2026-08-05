@@ -151,6 +151,13 @@ TrayApp::TrayApp(const SettingsModelPtr& settings, QObject* parent)
   disconnecting_label_action_ =
       new QAction(QObject::tr("Disconnecting..."), this);
 
+  // Show Reconnecting... label
+  reconnecting_label_action_ =
+      new QAction(QObject::tr("Reconnecting..."), this);
+  reconnecting_label_action_->setVisible(false);
+  connect(reconnecting_label_action_, &QAction::triggered, this,
+      &TrayApp::onDisconnectFromServer);
+
   // Disconect
   disconnect_action_ = new QAction(QObject::tr("Disconnect"), this);
 #ifndef __APPLE__
@@ -200,6 +207,7 @@ TrayApp::TrayApp(const SettingsModelPtr& settings, QObject* parent)
   tray_menu_->addAction(disconnect_action_);
   tray_menu_->addAction(connecting_label_action_);
   tray_menu_->addAction(disconnecting_label_action_);
+  tray_menu_->addAction(reconnecting_label_action_);
   tray_menu_->addAction(speed_widget_action_);
   tray_menu_->addSeparator();
   tray_menu_->addAction(settings_action_);
@@ -298,6 +306,10 @@ void TrayApp::UpdateTrayMenu() {
     empty_configuration_action_ = nullptr;
 
     limited_zone_connect_menu_ = nullptr;
+  }
+
+  if (reconnecting_label_action_) {
+    reconnecting_label_action_->setVisible(false);
   }
 
   switch (connection_state_) {
@@ -637,9 +649,32 @@ void TrayApp::handleTimer() {
           last_reconnection_time = now;
           is_disconnected = true;
         }
-      } else if (speed_widget_) {
-        speed_widget_->UpdateSpeed(
-            vpn_client_->GetReceiveRate(), vpn_client_->GetSendRate());
+      } else if (vpn_client_->IsReconnecting()) {
+        if (reconnecting_label_action_) {
+          const int n = vpn_client_->ReconnectAttempt();
+          QString text = QObject::tr("Reconnecting...");
+          if (n > 0) {
+            text += QString(" (%1/%2)")
+                        .arg(n)
+                        .arg(vpn_client_->MaxReconnectAttempts());
+          }
+          reconnecting_label_action_->setText(text);
+          reconnecting_label_action_->setVisible(true);
+        }
+        if (disconnect_action_) {
+          disconnect_action_->setVisible(false);
+        }
+      } else {
+        if (reconnecting_label_action_) {
+          reconnecting_label_action_->setVisible(false);
+        }
+        if (disconnect_action_) {
+          disconnect_action_->setVisible(true);
+        }
+        if (speed_widget_) {
+          speed_widget_->UpdateSpeed(
+              vpn_client_->GetReceiveRate(), vpn_client_->GetSendRate());
+        }
       }
     }
   }
@@ -869,18 +904,34 @@ bool TrayApp::startVpn(QString& err_msg) {
     return false;
   }
 
+  using fptn::protocol::connection::strategies::ConnectionStrategy;
+  const auto strategy_name = settings_->ConnectionStrategy();
+  auto connection_strategy = ConnectionStrategy::kPersistentTunnel;
+  if (strategy_name == SettingsModel::kConnectionStrategyBrowserMimicry) {
+    connection_strategy = ConnectionStrategy::kBrowserMimicry;
+  } else if (strategy_name == SettingsModel::kConnectionStrategyDual) {
+    connection_strategy = ConnectionStrategy::kDualTunnel;
+  } else if (strategy_name == SettingsModel::kConnectionStrategyTriple) {
+    connection_strategy = ConnectionStrategy::kTripleTunnel;
+  } else if (strategy_name == SettingsModel::kConnectionStrategyRolling) {
+    connection_strategy = ConnectionStrategy::kRollingTunnel;
+  }
+
   auto http_client = std::make_unique<fptn::vpn::http::Client>(
-      fptn::protocol::https::WebsocketClient::Config{.server_ip = server_ip,
-          .server_port = selected_server_.port,
-          .tun_interface_address_ipv4 =
-              common::network::IPv4Address(FPTN_CLIENT_DEFAULT_ADDRESS_IP4),
-          .tun_interface_address_ipv6 =
-              common::network::IPv6Address(FPTN_CLIENT_DEFAULT_ADDRESS_IP6),
-          .sni = sni,
-          .expected_md5_fingerprint = selected_server_.md5_fingerprint,
-          .censorship_strategy = censorship_strategy,
-          .on_connected_callback = nullptr,
-          .new_ip_pkt_callback = nullptr});
+      fptn::protocol::https::ConnectionConfig{
+          .common ={
+                  .server_ip = server_ip,
+                  .server_port =
+                      static_cast<std::uint16_t>(selected_server_.port),
+                  .sni = sni,
+                  .md5_fingerprint = selected_server_.md5_fingerprint,
+                  .censorship_strategy = censorship_strategy,
+                  .tun_interface_address_ipv4 = common::network::IPv4Address(
+                      FPTN_CLIENT_DEFAULT_ADDRESS_IP4),
+                  .tun_interface_address_ipv6 = common::network::IPv6Address(
+                      FPTN_CLIENT_DEFAULT_ADDRESS_IP6),
+              }},
+      connection_strategy);
 
   if (!pre_obtained_token_.empty()) {
     http_client->SetAccessToken(pre_obtained_token_);
@@ -948,6 +999,8 @@ bool TrayApp::startVpn(QString& err_msg) {
           .vpn_server_ip = server_ip,
           .dns_server_ipv4 = dns_server_ipv4,
           .dns_server_ipv6 = dns_server_ipv6,
+          .custom_dns_ipv4 = common::network::IPv4Address(
+              settings_->CustomDns().toStdString()),
           .gateway_ipv4 = gateway_ip,
           .gateway_ipv6 = gateway_ipv6,
           .exclude_networks = exclude_networks_std,

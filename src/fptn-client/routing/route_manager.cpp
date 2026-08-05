@@ -9,7 +9,6 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <algorithm>
 #include <memory>
 #include <string>
-#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -225,18 +224,17 @@ bool AddIPv6RouteToSystem(const std::string& destination,
   }
 }
 
-bool RemoveIPv4RouteFromSystem(const std::string& destination,
+std::string BuildRemoveIPv4RouteCommand(const std::string& destination,
     const std::string& gateway_ip,
     const std::string& out_interface) {
   (void)gateway_ip;
   (void)out_interface;
   try {
 #ifdef __linux__
-    const std::string command = fmt::format("ip route del {} via {} dev {}",
-        destination, gateway_ip, out_interface);
+    return fmt::format("ip route del {} via {} dev {}", destination, gateway_ip,
+        out_interface);
 #elif __APPLE__
-    const std::string command =
-        fmt::format("route delete -net {} {}", destination, gateway_ip);
+    return fmt::format("route delete -net {} {}", destination, gateway_ip);
 #elif _WIN32
     auto [ip, mask] = ParseIPv4CIDR(destination);
     std::string interface_param = "";
@@ -246,61 +244,73 @@ bool RemoveIPv4RouteFromSystem(const std::string& destination,
         interface_param = "if " + interface_number;
       }
     }
-    const std::string command = fmt::format(
+    return fmt::format(
         "route delete {} mask {} {} {}", ip, mask, gateway_ip, interface_param);
 #else
-    return false;
+    return {};
 #endif
-    fptn::common::system::command::run(command);
-    return true;
   } catch (const std::exception& e) {
-    SPDLOG_ERROR("Failed to remove IPv4 route {}: {}", destination, e.what());
-    return false;
+    SPDLOG_ERROR(
+        "Failed to build IPv4 route removal {}: {}", destination, e.what());
+    return {};
   } catch (...) {
-    SPDLOG_ERROR("Unknown error removing IPv4 route: {}", destination);
-    return false;
+    SPDLOG_ERROR("Unknown error building IPv4 route removal: {}", destination);
+    return {};
   }
 }
 
-bool RemoveIPv6RouteFromSystem(const std::string& destination,
+std::string BuildRemoveIPv6RouteCommand(const std::string& destination,
     const std::string& gateway_ip,
     const std::string& out_interface) {
   (void)gateway_ip;
   (void)out_interface;
   try {
 #ifdef __linux__
-    const std::string command = fmt::format("ip -6 route del {} via {} dev {}",
-        destination, gateway_ip, out_interface);
+    return fmt::format("ip -6 route del {} via {} dev {}", destination,
+        gateway_ip, out_interface);
 #elif __APPLE__
-    const std::string command =
-        fmt::format("route delete -inet6 {} {}", destination, gateway_ip);
+    return fmt::format("route delete -inet6 {} {}", destination, gateway_ip);
 #elif _WIN32
     auto [ip, prefix] = ParseIPv6CIDR(destination);
     std::string interface_name = out_interface;
     if (interface_name.empty()) {
       SPDLOG_ERROR("Interface name required for IPv6 route removal on Windows");
-      return false;
+      return {};
     }
-    const std::string command =
-        fmt::format("netsh interface ipv6 delete route {}/{} \"{}\"", ip,
-            prefix, interface_name);
+    return fmt::format("netsh interface ipv6 delete route {}/{} \"{}\"", ip,
+        prefix, interface_name);
 #else
-    return false;
+    return {};
 #endif
-    fptn::common::system::command::run(command);
-    return true;
   } catch (const std::exception& e) {
-    SPDLOG_ERROR("Failed to remove IPv6 route {}: {}", destination, e.what());
-    return false;
+    SPDLOG_ERROR(
+        "Failed to build IPv6 route removal {}: {}", destination, e.what());
+    return {};
   } catch (...) {
-    SPDLOG_ERROR("Unknown error removing IPv6 route: {}", destination);
-    return false;
+    SPDLOG_ERROR("Unknown error building IPv6 route removal: {}", destination);
+    return {};
   }
 }
 
 }  // namespace
 
 namespace fptn::routing {
+#ifdef __linux__
+void HealStaleResolvConf() {
+  const std::string command =
+      R"(bash -c "test -e /etc/resolv.conf.fptn-backup || exit 0; )"
+      R"(chattr -i /etc/resolv.conf 2>/dev/null; )"
+      R"(cp -f /etc/resolv.conf.fptn-backup /etc/resolv.conf; )"
+      R"(rm -f /etc/resolv.conf.fptn-backup; )"
+      R"(resolvectl flush-caches 2>/dev/null; true")";
+  try {
+    fptn::common::system::command::run(command);
+  } catch (const std::exception& e) {
+    SPDLOG_ERROR("Failed to heal /etc/resolv.conf: {}", e.what());
+  }
+}
+#endif
+
 RouteManager::RouteManager(Config config)
     : running_(false), config_(std::move(config)) {}
 
@@ -319,20 +329,27 @@ bool RouteManager::Apply(std::string tun_name) {
 
   tun_interface_name_ = std::move(tun_name);
   running_ = true;
-#if defined(__APPLE__) || defined(__linux__)
-  detected_out_interface_name_ =
-      (config_.out_interface_name.empty() ? GetDefaultNetworkInterfaceName()
-                                          : config_.out_interface_name);
-#endif
-  detected_out_interface_name_ =
-      (config_.out_interface_name.empty() ? GetDefaultNetworkInterfaceName()
-                                          : config_.out_interface_name);
-  detected_gateway_ipv4_ = config_.gateway_ipv4.IsEmpty()
-                               ? GetDefaultGatewayIPAddress()
-                               : config_.gateway_ipv4;
-  detected_gateway_ipv6_ = config_.gateway_ipv6.IsEmpty()
-                               ? GetDefaultGatewayIPv6Address()
-                               : config_.gateway_ipv6;
+  if (!config_.out_interface_name.empty()) {
+    detected_out_interface_name_ = config_.out_interface_name;
+  } else if (detected_out_interface_name_.empty()) {
+    detected_out_interface_name_ = GetDefaultNetworkInterfaceName();
+  }
+  if (!config_.gateway_ipv4.IsEmpty()) {
+    detected_gateway_ipv4_ = config_.gateway_ipv4;
+  } else if (detected_gateway_ipv4_.IsEmpty()) {
+    detected_gateway_ipv4_ = GetDefaultGatewayIPAddress();
+  }
+  if (!config_.gateway_ipv6.IsEmpty()) {
+    detected_gateway_ipv6_ = config_.gateway_ipv6;
+  } else if (detected_gateway_ipv6_.IsEmpty()) {
+    detected_gateway_ipv6_ = GetDefaultGatewayIPv6Address();
+  }
+
+  const bool has_custom_dns = config_.custom_dns_ipv4.IsValid();
+  const std::string custom_dns = config_.custom_dns_ipv4.ToString();
+  if (has_custom_dns) {
+    SPDLOG_INFO("Custom DNS (IPv4):              {}", custom_dns);
+  }
 
   SPDLOG_INFO("=== Setting up routing ===");
   SPDLOG_INFO(
@@ -348,6 +365,9 @@ bool RouteManager::Apply(std::string tun_name) {
   for (const auto& dns : original_dns_servers_) {
     SPDLOG_INFO("Saved dns: {}", dns);
   }
+  const std::string resolvectl_dns4 =
+      has_custom_dns ? (custom_dns + " " + config_.dns_server_ipv4.ToString())
+                     : config_.dns_server_ipv4.ToString();
   std::vector<std::string> commands = {fmt::format("systemctl start sysctl"),
       fmt::format("sysctl -w net.ipv4.ip_forward=1"),
       fmt::format("sysctl -w net.ipv6.conf.default.disable_ipv6=0"),
@@ -418,13 +438,14 @@ bool RouteManager::Apply(std::string tun_name) {
       // DNS via resolvectl
       fmt::format("resolvectl resolv-conf false"),
       fmt::format("resolvectl dns {} {}", detected_out_interface_name_,
-          config_.dns_server_ipv4.ToString()),
+          resolvectl_dns4),
       fmt::format(
           "resolvectl default-route {} false", detected_out_interface_name_),
-      fmt::format("resolvectl dns {} {}", tun_interface_name_,
-          config_.dns_server_ipv4.ToString()),
+      fmt::format("resolvectl dns {} {}", tun_interface_name_, resolvectl_dns4),
       fmt::format("resolvectl default-route {} true", tun_interface_name_),
       fmt::format("resolvectl domain {} ~.", tun_interface_name_),
+      fmt::format(
+          R"(bash -c "test -e /etc/resolv.conf.fptn-backup || cp -f /etc/resolv.conf /etc/resolv.conf.fptn-backup")"),
       fmt::format(R"(bash -c "chattr -i /etc/resolv.conf")"),
       fmt::format(
           R"(bash -c "grep -q '^nameserver {}$' /etc/resolv.conf || sed -i '1i nameserver {}' /etc/resolv.conf")",
@@ -437,8 +458,25 @@ bool RouteManager::Apply(std::string tun_name) {
       fmt::format(R"(bash -c "chattr +i /etc/resolv.conf")"),
       fmt::format("resolvectl flush-caches")};
 
+  if (has_custom_dns) {
+    commands.push_back(
+        fmt::format("ip route add {} dev {}", custom_dns, tun_interface_name_));
+    commands.push_back(fmt::format(
+        "iptables -A OUTPUT -d {} -p udp --dport 53 -j ACCEPT", custom_dns));
+    commands.push_back(fmt::format(
+        "iptables -A OUTPUT -d {} -p tcp --dport 53 -j ACCEPT", custom_dns));
+    commands.push_back(fmt::format(
+        R"(bash -c "chattr -i /etc/resolv.conf; grep -q '^nameserver {}$' /etc/resolv.conf || sed -i '1i nameserver {}' /etc/resolv.conf; chattr +i /etc/resolv.conf")",
+        custom_dns, custom_dns));
+  }
+
 #elif __APPLE__
-  const std::vector<std::string> commands = {
+  const std::string mac_dns_servers =
+      has_custom_dns ? (custom_dns + " " + config_.dns_server_ipv6.ToString() +
+                           " " + config_.dns_server_ipv4.ToString())
+                     : (config_.dns_server_ipv6.ToString() + " " +
+                           config_.dns_server_ipv4.ToString());
+  std::vector<std::string> commands = {
       fmt::format(
           R"(bash -c "networksetup -listallnetworkservices | grep -v '^An asterisk' | grep -v '^\* ' | xargs -I {{}} networksetup -setdnsservers '{{}}' empty")",
           config_.dns_server_ipv4.ToString()),  // clean DNS
@@ -487,9 +525,13 @@ pass out on {tunInterfaceName} proto tcp from any to any port 53
       // DNS
       fmt::format("dscacheutil -flushcache"),
       fmt::format(
-          R"(bash -c "networksetup -listallnetworkservices | grep -v '^An asterisk' | grep -v '^\* ' | xargs -I {{}} networksetup -setdnsservers '{{}}' {} {}")",
-          config_.dns_server_ipv6.ToString(),
-          config_.dns_server_ipv4.ToString())};
+          R"(bash -c "networksetup -listallnetworkservices | grep -v '^An asterisk' | grep -v '^\* ' | xargs -I {{}} networksetup -setdnsservers '{{}}' {}")",
+          mac_dns_servers)};
+
+  if (has_custom_dns) {
+    commands.push_back(fmt::format(
+        "route add -host {} -interface {}", custom_dns, tun_interface_name_));
+  }
 
 #elif _WIN32
   const std::string win_interface_number =
@@ -545,7 +587,9 @@ pass out on {tunInterfaceName} proto tcp from any to any port 53
       netsh interface ipv6 set dnsservers name=\"$interface\" source=static address=$dns6 validate=no register=no 2>`$null;
   }")PSHELL";
 
-  const std::vector<std::string> commands = {
+  const std::string win_tun_dns4 =
+      has_custom_dns ? custom_dns : config_.dns_server_ipv4.ToString();
+  std::vector<std::string> commands = {
       fmt::format("route add {} mask 255.255.255.255 {} METRIC 2",
           config_.vpn_server_ip.ToString(), detected_gateway_ipv4_.ToString()),
       // Default gateway & dns
@@ -563,7 +607,7 @@ pass out on {tunInterfaceName} proto tcp from any to any port 53
           ? configure_dns_cmd
           : "echo \"No advanced DNS management\" ",
       fmt::format("netsh interface ip set dns name=\"{}\" static {}",
-          tun_interface_name_, config_.dns_server_ipv4.ToString()),
+          tun_interface_name_, win_tun_dns4),
       // IPv6
       fmt::format("netsh interface ipv6 add route ::/0 \"{}\" \"{}\" ",
           tun_interface_name_, config_.tun_interface_address_ipv6.ToString()),
@@ -571,6 +615,15 @@ pass out on {tunInterfaceName} proto tcp from any to any port 53
           tun_interface_name_, config_.dns_server_ipv6.ToString()),
       // Flush DNS cache
       "ipconfig /flushdns"};
+
+  if (has_custom_dns) {
+    commands.push_back(
+        fmt::format("netsh interface ip add dns name=\"{}\" {} index=2",
+            tun_interface_name_, config_.dns_server_ipv4.ToString()));
+    commands.push_back(fmt::format(
+        "route add {} mask 255.255.255.255 {} METRIC 2 {}", custom_dns,
+        config_.tun_interface_address_ipv4.ToString(), interface_info));
+  }
 
 #else
 #error "Unsupported system!"
@@ -603,6 +656,11 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
 
   running_ = false;
 
+  const bool has_custom_dns = config_.custom_dns_ipv4.IsValid();
+  const std::string custom_dns = config_.custom_dns_ipv4.ToString();
+
+  std::vector<std::string> del_commands;
+
   // clean dns ipv4
   for (const auto& ip : dns_routes_ipv4_) {
     std::string interface_name;
@@ -617,8 +675,8 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
     } else {
       interface_name = tun_interface_name_;
     }
-    RemoveIPv4RouteFromSystem(
-        ip.destination, config_.gateway_ipv4.ToString(), interface_name);
+    del_commands.push_back(BuildRemoveIPv4RouteCommand(
+        ip.destination, config_.gateway_ipv4.ToString(), interface_name));
   }
   dns_routes_ipv4_.clear();
 
@@ -636,20 +694,20 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
     } else {
       interface_name = tun_interface_name_;
     }
-    RemoveIPv6RouteFromSystem(
-        ip.destination, config_.gateway_ipv6.ToString(), interface_name);
+    del_commands.push_back(BuildRemoveIPv6RouteCommand(
+        ip.destination, config_.gateway_ipv6.ToString(), interface_name));
   }
   dns_routes_ipv6_.clear();
 
   // clean route ipv4
   for (const auto& route : additional_routes_ipv4_) {
     if (route.policy == RoutingPolicy::kExcludeFromVpn) {
-      RemoveIPv4RouteFromSystem(route.destination,
-          config_.gateway_ipv4.ToString(), config_.out_interface_name);
+      del_commands.push_back(BuildRemoveIPv4RouteCommand(route.destination,
+          config_.gateway_ipv4.ToString(), config_.out_interface_name));
     } else {
       // Include route - remove through VPN interface
-      RemoveIPv4RouteFromSystem(route.destination,
-          config_.tun_interface_address_ipv4.ToString(), tun_interface_name_);
+      del_commands.push_back(BuildRemoveIPv4RouteCommand(route.destination,
+          config_.tun_interface_address_ipv4.ToString(), tun_interface_name_));
     }
   }
   additional_routes_ipv4_.clear();
@@ -657,15 +715,17 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
   // Remove additional IPv6 routes
   for (const auto& route : additional_routes_ipv6_) {
     if (route.policy == RoutingPolicy::kExcludeFromVpn) {
-      RemoveIPv6RouteFromSystem(route.destination,
-          config_.gateway_ipv6.ToString(), config_.out_interface_name);
+      del_commands.push_back(BuildRemoveIPv6RouteCommand(route.destination,
+          config_.gateway_ipv6.ToString(), config_.out_interface_name));
     } else {
       // Include route - remove through VPN interface
-      RemoveIPv6RouteFromSystem(route.destination,
-          config_.tun_interface_address_ipv6.ToString(), tun_interface_name_);
+      del_commands.push_back(BuildRemoveIPv6RouteCommand(route.destination,
+          config_.tun_interface_address_ipv6.ToString(), tun_interface_name_));
     }
   }
   additional_routes_ipv6_.clear();
+
+  fptn::common::system::command::run_batch(del_commands);
 
 #ifdef __linux__
   std::vector<std::string> commands = {
@@ -691,7 +751,7 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
       fmt::format("ip route del {} dev {}", config_.dns_server_ipv4.ToString(),
           tun_interface_name_),
       fmt::format(
-          R"(bash -c "chattr -i /etc/resolv.conf; sed -i '/^nameserver {}$/d' /etc/resolv.conf; sed -i '/^nameserver {}$/d' /etc/resolv.conf")",
+          R"(bash -c "chattr -i /etc/resolv.conf; sed -i '/^nameserver {}$/d' /etc/resolv.conf; sed -i '/^nameserver {}$/d' /etc/resolv.conf; rm -f /etc/resolv.conf.fptn-backup")",
           config_.dns_server_ipv4.ToString(),
           config_.dns_server_ipv6.ToString()),
       // Delete DNS to specific DNS server IP rules
@@ -728,6 +788,18 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
       fmt::format("ip6tables -D OUTPUT -o {} -p tcp --sport 53 -j ACCEPT",
           tun_interface_name_)};
 
+  if (has_custom_dns) {
+    commands.push_back(
+        fmt::format("ip route del {} dev {}", custom_dns, tun_interface_name_));
+    commands.push_back(fmt::format(
+        "iptables -D OUTPUT -d {} -p udp --dport 53 -j ACCEPT", custom_dns));
+    commands.push_back(fmt::format(
+        "iptables -D OUTPUT -d {} -p tcp --dport 53 -j ACCEPT", custom_dns));
+    commands.push_back(fmt::format(
+        R"(bash -c "chattr -i /etc/resolv.conf; sed -i '/^nameserver {}$/d' /etc/resolv.conf")",
+        custom_dns));
+  }
+
   if (!detected_gateway_ipv6_.IsEmpty()) {
     commands.push_back(fmt::format("ip -6 route del {} dev {}",
         config_.dns_server_ipv6.ToString(), tun_interface_name_));
@@ -762,7 +834,7 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
   commands.emplace_back("resolvectl flush-caches");
 
 #elif __APPLE__
-  const std::vector<std::string> commands = {
+  std::vector<std::string> commands = {
       fmt::format(
           R"(bash -c "networksetup -listallnetworkservices | grep -v '^An asterisk' | grep -v '^\* ' | xargs -I {{}} networksetup -setdnsservers '{{}}' empty")"),  // clean DNS
       fmt::format("pfctl -F all -f /etc/pf.conf"),
@@ -785,6 +857,11 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
       fmt::format(
           R"(bash -c "networksetup -listallnetworkservices | grep -v '^An asterisk' | grep -v '^\* ' | xargs -I {{}} networksetup -setdnsservers '{{}}' empty")")  // clean DNS
   };
+
+  if (has_custom_dns) {
+    commands.push_back(fmt::format("route delete -host {} -interface {}",
+        custom_dns, tun_interface_name_));
+  }
 #elif _WIN32
   std::string current_interface_name = detected_out_interface_name_;
   if (current_interface_name.empty()) {
@@ -830,25 +907,27 @@ bool RouteManager::Clean() {  // NOLINT(bugprone-exception-escape)
         }
     }")PSHELL";
 
-  const std::vector<std::string> commands = {
+  std::vector<std::string> commands = {
       config_.enable_advanced_dns_management
           ? restore_dns_cmd
           : "echo \"No advanced DNS management\" ",
       // Remove routes
       fmt::format("route delete {} mask 255.255.255.255",
           config_.vpn_server_ip.ToString()),
-      fmt::format("route delete 0.0.0.0 mask 0.0.0.0"),
+      fmt::format("route delete 0.0.0.0 mask 0.0.0.0 {}",
+          config_.tun_interface_address_ipv4.ToString()),
       fmt::format("route delete {} mask 255.255.255.255",
           config_.dns_server_ipv4.ToString()),
       fmt::format(
           "netsh interface ipv6 delete route ::/0 \"{}\"", tun_interface_name_),
 
       // Final cleanup
-      "ipconfig /flushdns",
+      "ipconfig /flushdns"};
 
-      // restore routing
-      fmt::format("route add 0.0.0.0 mask 0.0.0.0 {} METRIC 1",
-          detected_gateway_ipv4_.ToString())};
+  if (has_custom_dns) {
+    commands.push_back(
+        fmt::format("route delete {} mask 255.255.255.255", custom_dns));
+  }
 
 #else
 #error "Unsupported system!"
@@ -1177,10 +1256,16 @@ fptn::common::network::IPv4Address ResolveDomain(const std::string& domain) {
 fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
   try {
 #ifdef __linux__
-    const std::string command = "ip route get 8.8.8.8";
+    const std::string command =
+        "for ip in 8.8.8.8 8.8.4.4 77.88.8.8; do r=$(ip route get $ip "
+        "2>/dev/null | awk '{print $3; exit}'); [ -n \"$r\" ] && echo \"$r\" "
+        "&& "
+        "break; done";
 #elif __APPLE__
     const std::string command =
-        "route get 8.8.8.8 | grep gateway | awk '{print $2}' ";
+        "for ip in 8.8.8.8 8.8.4.4 77.88.8.8; do r=$(route get $ip 2>/dev/null "
+        "| grep gateway | awk '{print $2}'); [ -n \"$r\" ] && echo \"$r\" && "
+        "break; done";
 #elif _WIN32
     const std::string command =
         R"(cmd.exe /c FOR /f "tokens=3" %i in ('route print ^| find "0.0.0.0"') do @echo %i)";
@@ -1189,41 +1274,6 @@ fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
 #endif
     std::vector<std::string> cmd_stdout;
     fptn::common::system::command::run(command, cmd_stdout);
-
-#ifdef __linux__
-    for (const auto& line : cmd_stdout) {
-      std::stringstream ss(line);
-      std::string token;
-      std::vector<std::string> tokens;
-      while (ss >> token) {
-        tokens.push_back(token);
-      }
-      // 1. Ищем "via"
-      for (size_t i = 0; i < tokens.size(); ++i) {
-        if (tokens[i] == "via" && i + 1 < tokens.size()) {
-          std::string gw = tokens[i + 1];
-          std::erase_if(gw, [](char c) {
-            return !std::isalnum(c) && c != '.' && c != '-';
-          });
-          if (!gw.empty()) {
-            return ResolveDomain(gw);
-          }
-        }
-      }
-      // 2. Если "via" нет (PPPoE/PPP), ищем "src" в качестве фоллбэка
-      for (size_t i = 0; i < tokens.size(); ++i) {
-        if (tokens[i] == "src" && i + 1 < tokens.size()) {
-          std::string gw = tokens[i + 1];
-          std::erase_if(gw, [](char c) {
-            return !std::isalnum(c) && c != '.' && c != '-';
-          });
-          if (!gw.empty()) {
-            return ResolveDomain(gw);
-          }
-        }
-      }
-    }
-#else
     for (const auto& line : cmd_stdout) {
       std::string result = line;
       result.erase(
@@ -1238,7 +1288,6 @@ fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
         return ResolveDomain(result);
       }
     }
-#endif
   } catch (const std::exception& ex) {
     SPDLOG_ERROR("Error: Failed to retrieve the default gateway IP address. {}",
         ex.what());
@@ -1249,65 +1298,33 @@ fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
 fptn::common::network::IPv6Address GetDefaultGatewayIPv6Address() {
   try {
 #ifdef __linux__
-    const std::string command = "ip -6 route";
+    const std::string command =
+        "ip -6 route | grep default | head -1 | awk '{print $3}'";
 #elif __APPLE__
     const std::string command =
         "route get -inet6 default | grep gateway | awk '{print $2}'";
 #elif _WIN32
     const std::string command =
-        R"(netsh interface ipv6 show routes | find "::/0" | head -1 | awk "{print $3}")";
+        R"(powershell -Command "(Get-NetRoute -DestinationPrefix '::/0' | Sort-Object RouteMetric | Select-Object -First 1).NextHop")";
 #else
     return {};
 #endif
     std::vector<std::string> cmd_stdout;
     fptn::common::system::command::run(command, cmd_stdout);
 
-#ifdef __linux__
-    for (const auto& line : cmd_stdout) {
-      if (line.find("default") != std::string::npos) {
-        std::stringstream ss(line);
-        std::string token;
-        std::vector<std::string> tokens;
-        while (ss >> token) {
-          tokens.push_back(token);
-        }
-        // 1. Ищем "via"
-        for (size_t i = 0; i < tokens.size(); ++i) {
-          if (tokens[i] == "via" && i + 1 < tokens.size()) {
-            std::string gw = tokens[i + 1];
-            std::erase_if(gw, [](char c) {
-              return !std::isalnum(c) && c != ':' && c != '.' && c != '-';
-            });
-            if (!gw.empty()) {
-              return fptn::common::network::IPv6Address::Create(gw);
-            }
-          }
-        }
-        // 2. Если "via" нет, ищем "src" в качестве фоллбэка
-        for (size_t i = 0; i < tokens.size(); ++i) {
-          if (tokens[i] == "src" && i + 1 < tokens.size()) {
-            std::string gw = tokens[i + 1];
-            std::erase_if(gw, [](char c) {
-              return !std::isalnum(c) && c != ':' && c != '.' && c != '-';
-            });
-            if (!gw.empty()) {
-              return fptn::common::network::IPv6Address::Create(gw);
-            }
-          }
-        }
-      }
-    }
-#else
     for (const auto& line : cmd_stdout) {
       std::string result = line;
       std::erase_if(result, [](const char c) {
         return !std::isalnum(c) && c != ':' && c != '.' && c != '-';
       });
-      if (!result.empty()) {
-        return fptn::common::network::IPv6Address::Create(result);
+      if (result.empty()) {
+        continue;
+      }
+      const auto addr = fptn::common::network::IPv6Address::Create(result);
+      if (addr.IsValid()) {
+        return addr;
       }
     }
-#endif
   } catch (const std::exception& ex) {
     SPDLOG_ERROR("Error getting IPv6 gateway: {}", ex.what());
   }
@@ -1318,35 +1335,22 @@ std::string GetDefaultNetworkInterfaceName() {
   std::string result;
   try {
 #ifdef __linux__
-    const std::string command = "ip route get 8.8.8.8";
+    const std::string command =
+        "for ip in 8.8.8.8 8.8.4.4 77.88.8.8; do r=$(ip route get $ip "
+        "2>/dev/null | awk '{print $5; exit}'); [ -n \"$r\" ] && echo \"$r\" "
+        "&& "
+        "break; done";
 #elif __APPLE__
     const std::string command =
-        "route get 8.8.8.8 | grep interface | awk '{print $2}' ";
+        "for ip in 8.8.8.8 8.8.4.4 77.88.8.8; do r=$(route get $ip 2>/dev/null "
+        "| grep interface | awk '{print $2}'); [ -n \"$r\" ] && echo \"$r\" && "
+        "break; done";
 #elif _WIN32
     const std::string command =
         R"(powershell -Command "(Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object {$_.NextHop -ne '0.0.0.0'} | Select-Object -First 1).InterfaceAlias")";
 #endif
     std::vector<std::string> cmd_stdout;
     fptn::common::system::command::run(command, cmd_stdout);
-
-#ifdef __linux__
-    for (const auto& line : cmd_stdout) {
-      std::stringstream ss(line);
-      std::string token;
-      std::vector<std::string> tokens;
-      while (ss >> token) {
-        tokens.push_back(token);
-      }
-      for (size_t i = 0; i < tokens.size(); ++i) {
-        if (tokens[i] == "dev" && i + 1 < tokens.size()) {
-          result = tokens[i + 1];
-          result.erase(result.find_last_not_of(" \n\r\t") + 1);
-          result.erase(0, result.find_first_not_of(" \n\r\t"));
-          return result;
-        }
-      }
-    }
-#else
     if (cmd_stdout.empty()) {
       SPDLOG_WARN("Warning: Default gateway IP address not found.");
       return {};
@@ -1356,7 +1360,6 @@ std::string GetDefaultNetworkInterfaceName() {
       result.erase(result.find_last_not_of(" \n\r\t") + 1);
       result.erase(0, result.find_first_not_of(" \n\r\t"));
     }
-#endif
   } catch (const std::exception& ex) {
     SPDLOG_ERROR("Error: Failed to retrieve the default gateway IP address. {}",
         ex.what());

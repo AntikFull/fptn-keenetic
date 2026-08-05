@@ -13,10 +13,12 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <vector>
 
 #include <boost/asio.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/beast.hpp>
 #include <spdlog/spdlog.h>  // NOLINT(build/include_order)
 
+#include "common/network/ip_utils.h"
 #include "common/network/resolv.h"
 #include "common/network/utils.h"
 
@@ -35,28 +37,40 @@ boost::asio::awaitable<fptn::web::HandshakeResponse> FetchRealHandshake(
   auto full_response = std::make_shared<std::vector<std::uint8_t>>();
   full_response->reserve(kMaxTotalSize);
   try {
-    // DNS resolution
-    const auto resolve_result =
-        co_await fptn::common::network::AsyncResolve(sni, "443");
+    auto fetch = [&]() -> boost::asio::awaitable<void> {
+      // DNS resolution
+      const auto resolve_result =
+          co_await fptn::common::network::AsyncResolve(sni, "443");
 
-    if (!resolve_result.success()) {
-      SPDLOG_WARN("DNS failed for {}: {}", sni, resolve_result.error.message());
-      co_return nullptr;
-    }
+      if (!resolve_result.success()) {
+        SPDLOG_WARN(
+            "DNS failed for {}: {}", sni, resolve_result.error.message());
+        co_return;
+      }
 
-    // Connect to real server
-    co_await boost::asio::async_connect(
-        target_socket, resolve_result.results, boost::asio::use_awaitable);
+      // Connect to real server
+      co_await boost::asio::async_connect(
+          target_socket, resolve_result.results, boost::asio::use_awaitable);
 
-    // Send client handshake
-    co_await boost::asio::async_write(target_socket,
-        boost::asio::buffer(client_handshake_data), boost::asio::use_awaitable);
+      // Send client handshake
+      co_await boost::asio::async_write(target_socket,
+          boost::asio::buffer(client_handshake_data),
+          boost::asio::use_awaitable);
 
-    const auto server_response =
-        co_await fptn::common::network::WaitForServerTlsHelloAsync(
-            target_socket, timeout);
-    if (server_response.has_value()) {
-      *full_response = server_response.value();
+      const auto server_response =
+          co_await fptn::common::network::WaitForServerTlsHelloAsync(
+              target_socket, timeout);
+      if (server_response.has_value()) {
+        *full_response = server_response.value();
+      }
+    };
+
+    boost::asio::steady_timer deadline(executor, timeout);
+    using boost::asio::experimental::awaitable_operators::operator||;
+    const auto race = co_await(  // NOLINT(whitespace/parens)
+        fetch() || deadline.async_wait(boost::asio::use_awaitable));
+    if (race.index() == 1) {
+      SPDLOG_WARN("Timeout fetching handshake from {}", sni);
     }
     SPDLOG_INFO("Received {} bytes from {}", full_response->size(), sni);
   } catch (const std::exception& e) {
@@ -66,6 +80,10 @@ boost::asio::awaitable<fptn::web::HandshakeResponse> FetchRealHandshake(
   boost::system::error_code close_ec;
   target_socket.close(close_ec);
 
+  // cppcheck-suppress knownConditionTrueFalse
+  if (full_response->empty()) {
+    co_return nullptr;
+  }
   co_return full_response;
 }
 }  // namespace
@@ -106,6 +124,16 @@ boost::asio::awaitable<HandshakeResponse> HandshakeCacheManager::GetHandshake(
     SPDLOG_INFO("Cache hit for SNI: {} (TLS fingerprint size: {})", sni,
         cached_response->size());
     co_return cached_response;
+  }
+
+  const auto client_sni = fptn::common::network::GetTlsSNI(buffer_ptr, size);
+  if (client_sni != sni) {
+    SPDLOG_INFO(
+        "ClientHello SNI '{}' differs from target '{}', generating a matching "
+        "handshake",
+        client_sni.value_or(""), sni);
+    client_handshake_data =
+        fptn::protocol::https::utils::GenerateDecoyTlsHandshake(sni);
   }
 
   HandshakeResponse response =

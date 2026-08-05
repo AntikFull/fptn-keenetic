@@ -15,16 +15,17 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 
 #include <utility>
 
-#include <QFileDialog>       // NOLINT(build/include_order)
-#include <QGridLayout>       // NOLINT(build/include_order)
-#include <QHeaderView>       // NOLINT(build/include_order)
-#include <QLabel>            // NOLINT(build/include_order)
-#include <QLineEdit>         // NOLINT(build/include_order)
-#include <QMessageBox>       // NOLINT(build/include_order)
-#include <QPushButton>       // NOLINT(build/include_order)
-#include <QScrollArea>       // NOLINT(build/include_order)
-#include <QSystemTrayIcon>   // NOLINT(build/include_order)
-#include <QTableWidgetItem>  // NOLINT(build/include_order)
+#include <QFileDialog>                  // NOLINT(build/include_order)
+#include <QGridLayout>                  // NOLINT(build/include_order)
+#include <QHeaderView>                  // NOLINT(build/include_order)
+#include <QLabel>                       // NOLINT(build/include_order)
+#include <QLineEdit>                    // NOLINT(build/include_order)
+#include <QMessageBox>                  // NOLINT(build/include_order)
+#include <QPushButton>                  // NOLINT(build/include_order)
+#include <QRegularExpressionValidator>  // NOLINT(build/include_order)
+#include <QScrollArea>                  // NOLINT(build/include_order)
+#include <QSystemTrayIcon>              // NOLINT(build/include_order)
+#include <QTableWidgetItem>             // NOLINT(build/include_order)
 
 #include "gui/autostart/autostart.h"
 #include "gui/tokendialog/tokendialog.h"
@@ -143,6 +144,7 @@ void SettingsWidget::SetupUi() {
     gateway_auto_checkbox_->setChecked(false);
     gateway_line_edit_->setText(settings_->GatewayIp());
     gateway_line_edit_->setEnabled(true);
+    gateway_line_edit_->setPlaceholderText("192.168.1.1");
   } else {
     gateway_auto_checkbox_->setChecked(true);
     gateway_line_edit_->setDisabled(true);
@@ -159,11 +161,66 @@ void SettingsWidget::SetupUi() {
   grid_layout_->addWidget(gateway_label_, 3, 0, Qt::AlignLeft);
   grid_layout_->addLayout(gateway_layout, 3, 1);
 
+  custom_dns_label_ = new QLabel(QObject::tr("Custom DNS"), this);
+  custom_dns_auto_checkbox_ = new QCheckBox(QObject::tr("Auto"), this);
+  custom_dns_line_edit_ = new QLineEdit(this);
+  const QString ipv4_octet = "(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])";
+  custom_dns_line_edit_->setValidator(new QRegularExpressionValidator(
+      QRegularExpression("^(" + ipv4_octet + "\\.){3}" + ipv4_octet + "$"),
+      this));
+  if (!settings_->CustomDns().isEmpty()) {
+    custom_dns_auto_checkbox_->setChecked(false);
+    custom_dns_line_edit_->setText(settings_->CustomDns());
+    custom_dns_line_edit_->setEnabled(true);
+    custom_dns_line_edit_->setPlaceholderText("8.8.8.8");
+  } else {
+    custom_dns_auto_checkbox_->setChecked(true);
+    custom_dns_line_edit_->setDisabled(true);
+  }
+  connect(custom_dns_auto_checkbox_, &QCheckBox::toggled, this,
+      &SettingsWidget::onAutoCustomDnsChanged);
+
+  auto* custom_dns_layout = new QHBoxLayout();
+  custom_dns_layout->addWidget(custom_dns_auto_checkbox_);
+  custom_dns_layout->addWidget(custom_dns_line_edit_);
+  custom_dns_layout->setStretch(0, 0);
+  custom_dns_layout->setStretch(1, 1);
+
+  grid_layout_->addWidget(custom_dns_label_, 4, 0, Qt::AlignLeft);
+  grid_layout_->addLayout(custom_dns_layout, 4, 1);
+
+  connection_strategy_label_ =
+      new QLabel(QObject::tr("Connection strategy"), this);
+  connection_strategy_combo_box_ = new QComboBox(this);
+  connection_strategy_combo_box_->addItem(QObject::tr("Persistent tunnel"),
+      SettingsModel::kConnectionStrategyPersistent);
+  connection_strategy_combo_box_->addItem(
+      QObject::tr("Rolling tunnel"), SettingsModel::kConnectionStrategyRolling);
+  connection_strategy_combo_box_->addItem(QObject::tr("Dual rolling tunnel"),
+      SettingsModel::kConnectionStrategyDual);
+  connection_strategy_combo_box_->addItem(QObject::tr("Triple rolling tunnel"),
+      SettingsModel::kConnectionStrategyTriple);
+  connection_strategy_combo_box_->setSizePolicy(
+      QSizePolicy::Expanding, QSizePolicy::Fixed);
+  connection_strategy_combo_box_->setMinimumWidth(200);
+
+  const int connection_strategy_index =
+      connection_strategy_combo_box_->findData(settings_->ConnectionStrategy());
+  connection_strategy_combo_box_->setCurrentIndex(
+      connection_strategy_index >= 0 ? connection_strategy_index : 0);
+
+  connect(connection_strategy_combo_box_, &QComboBox::currentIndexChanged, this,
+      [this](int) {
+        settings_->SetConnectionStrategy(
+            connection_strategy_combo_box_->currentData().toString());
+      });
+
+  grid_layout_->addWidget(connection_strategy_label_, 5, 0, Qt::AlignLeft);
+  grid_layout_->addWidget(connection_strategy_combo_box_, 5, 1);
+
   bypass_method_label_ =
       new QLabel(QObject::tr("Bypass blocking method"), this);
   bypass_method_combo_box_ = new QComboBox(this);
-  bypass_method_combo_box_->addItem(
-      QObject::tr("SNI"), SettingsModel::kBypassMethodSni);
   bypass_method_combo_box_->addItem(
       QObject::tr("OBFUSCATION"), SettingsModel::kBypassMethodObfuscation);
   /* Chrome */
@@ -204,11 +261,7 @@ void SettingsWidget::SetupUi() {
   bypass_method_combo_box_->setMinimumWidth(200);
 
   const QString current_method = settings_->BypassMethod();
-  if (current_method == SettingsModel::kBypassMethodSni) {
-    bypass_method_combo_box_->setCurrentText(QObject::tr("SNI"));
-  }
-  /* Obfuscation */
-  else if (current_method == SettingsModel::kBypassMethodObfuscation) {
+  if (current_method == SettingsModel::kBypassMethodObfuscation) {
     bypass_method_combo_box_->setCurrentText(QObject::tr("OBFUSCATION"));
   }
   /* Chrome */
@@ -266,17 +319,12 @@ void SettingsWidget::SetupUi() {
     bypass_method_combo_box_->setCurrentText(
         QObject::tr("SNI-REALITY (Safari 26.4)"));
   }
-  /* Default */
-  else {
-    bypass_method_combo_box_->setCurrentText(
-        QObject::tr("SNI-REALITY (Yandex 25)"));
-  }
 
   connect(bypass_method_combo_box_, &QComboBox::currentTextChanged, this,
       &SettingsWidget::onBypassMethodChanged);
 
-  grid_layout_->addWidget(bypass_method_label_, 4, 0, Qt::AlignLeft);
-  grid_layout_->addWidget(bypass_method_combo_box_, 4, 1);
+  grid_layout_->addWidget(bypass_method_label_, 6, 0, Qt::AlignLeft);
+  grid_layout_->addWidget(bypass_method_combo_box_, 6, 1);
 
   sni_label_ = new QLabel(this);
   if (settings_->BypassMethod() == SettingsModel::kBypassMethodSniReality) {
@@ -304,8 +352,8 @@ void SettingsWidget::SetupUi() {
         settings_->SetSNI(normalized);
       });
 
-  grid_layout_->addWidget(sni_label_, 5, 0, Qt::AlignLeft | Qt::AlignVCenter);
-  grid_layout_->addWidget(sni_line_edit_, 5, 1);
+  grid_layout_->addWidget(sni_label_, 7, 0, Qt::AlignLeft | Qt::AlignVCenter);
+  grid_layout_->addWidget(sni_line_edit_, 7, 1);
 
   sni_files_list_widget_ = new QListWidget(this);
   sni_files_list_widget_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -324,8 +372,8 @@ void SettingsWidget::SetupUi() {
   sni_autoscan_button_->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
   sni_import_button_->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 
-  grid_layout_->addLayout(sni_buttons_layout_, 7, 0, 1, 2);
-  grid_layout_->addWidget(sni_files_list_widget_, 8, 0, 1, 2);
+  grid_layout_->addLayout(sni_buttons_layout_, 8, 0, 1, 2);
+  grid_layout_->addWidget(sni_files_list_widget_, 9, 0, 1, 2);
   connect(sni_autoscan_button_, &QPushButton::clicked, this,
       &SettingsWidget::onAutoscanClicked);
 
@@ -817,7 +865,13 @@ void SettingsWidget::SetupUi() {
       "  - ББ<br>"
       "  - huko<br>"
       "  - @UNBREAKABLE189<br>"
-      "  - TheChosenOne<br>";
+      "  - TheChosenOne<br>"
+      "  - Noragami9779<br>"
+      "  - NightFox<br>"
+      "  - puffffik<br>"
+      "  - draserg1<br>"
+      "  - Artem Kushner<br>"
+      "  - AgNeSYUT<br>";
 
   sponsors_names_label_ = new QLabel(sponsors_list, this);
   sponsors_names_label_->setAlignment(Qt::AlignLeft);
@@ -920,6 +974,18 @@ void SettingsWidget::onExit() {
   settings_->SetLanguage(language_combo_box_->currentText());
   settings_->SetGatewayIp(gateway_line_edit_->text());
   settings_->SetSNI(sni_line_edit_->text());
+
+  if (custom_dns_auto_checkbox_->isChecked()) {
+    settings_->SetCustomDns("");
+  } else {
+    settings_->SetCustomDns(custom_dns_line_edit_->text());
+    if (settings_->CustomDns().isEmpty()) {
+      custom_dns_auto_checkbox_->setChecked(true);
+      QMessageBox::warning(this, QObject::tr("Custom DNS"),
+          QObject::tr(
+              "Please enter a valid DNS IPv4 address or enable Auto."));
+    }
+  }
 
   const QString current_method = bypass_method_combo_box_->currentText();
 
@@ -1379,6 +1445,10 @@ void SettingsWidget::onLanguageChanged(const QString&) {
         "domain:com\ndomain:another.com\ndomain:sub.domainname.com"));
   }
 
+  if (custom_dns_label_) {
+    custom_dns_label_->setText(QObject::tr("Custom DNS"));
+  }
+
   // about
   if (version_label_) {
     version_label_->setText(
@@ -1426,9 +1496,22 @@ void SettingsWidget::onAutoGatewayChanged(bool checked) {
   if (checked) {
     gateway_line_edit_->setDisabled(true);
     gateway_line_edit_->setText("");
+    gateway_line_edit_->setPlaceholderText("");
     settings_->SetGatewayIp("auto");
   } else {
     gateway_line_edit_->setEnabled(true);
+    gateway_line_edit_->setPlaceholderText("192.168.1.1");
+  }
+}
+void SettingsWidget::onAutoCustomDnsChanged(bool checked) {
+  if (checked) {
+    custom_dns_line_edit_->setDisabled(true);
+    custom_dns_line_edit_->setText("");
+    custom_dns_line_edit_->setPlaceholderText("");
+    settings_->SetCustomDns("");
+  } else {
+    custom_dns_line_edit_->setEnabled(true);
+    custom_dns_line_edit_->setPlaceholderText("8.8.8.8");
   }
 }
 void SettingsWidget::onBypassMethodChanged(const QString& method) {
@@ -1477,10 +1560,10 @@ void SettingsWidget::onBypassMethodChanged(const QString& method) {
   sni_import_button_->setVisible(is_reality_mode);
 
   if (is_reality_mode) {
-    grid_layout_->addWidget(sni_label_, 5, 0, Qt::AlignLeft | Qt::AlignVCenter);
-    grid_layout_->addWidget(sni_line_edit_, 5, 1, 1, 2);
-    grid_layout_->addLayout(sni_buttons_layout_, 7, 0);
-    grid_layout_->addWidget(sni_files_list_widget_, 7, 1, 1, 2);
+    grid_layout_->addWidget(sni_label_, 7, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    grid_layout_->addWidget(sni_line_edit_, 7, 1, 1, 2);
+    grid_layout_->addLayout(sni_buttons_layout_, 8, 0);
+    grid_layout_->addWidget(sni_files_list_widget_, 8, 1, 1, 2);
   } else {
     grid_layout_->removeWidget(sni_label_);
     grid_layout_->removeWidget(sni_line_edit_);

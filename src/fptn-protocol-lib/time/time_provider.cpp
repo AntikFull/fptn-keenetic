@@ -19,7 +19,7 @@ TimeProvider::TimeProvider(NtpServers servers)
   SyncWithNtp();
 }
 
-std::string TimeProvider::Rfc7231Date() {
+std::string TimeProvider::Rfc7231Date() const {
   const std::uint32_t timestamp = NowTimestamp();
   const auto now = static_cast<std::time_t>(timestamp);
   char buf[128] = {0};
@@ -45,24 +45,7 @@ std::int32_t TimeProvider::OffsetSeconds() const {
   return offset_seconds_.load();
 }
 
-std::uint32_t TimeProvider::NowTimestamp() {
-  const std::scoped_lock lock(mutex_);  // mutex
-
-  const auto now = std::chrono::steady_clock::now();
-  const auto age = now - last_sync_time_.load();
-  // После неудачной синхронизации повторяем не раньше чем через
-  // kRetryInterval_. Раньше last_sync_time_ обновлялось только при успехе,
-  // поэтому при недоступном NTP (типовая ситуация на роутере, который стартует
-  // до поднятия WAN) условие было истинным всегда — и КАЖДЫЙ вызов
-  // NowTimestamp() уходил в блокирующий запрос ко всем серверам под этим же
-  // мьютексом. А вызывается он из построения TLS-рукопожатия, то есть
-  // многократно на одно соединение.
-  const bool need_refresh =
-      synchronized_ ? (age > kSyncInterval_) : (age > kRetryInterval_);
-  if (need_refresh) {
-    Refresh();
-  }
-
+std::uint32_t TimeProvider::NowTimestamp() const {
   return static_cast<std::uint32_t>(
       std::time(nullptr) + offset_seconds_.load());
 }
@@ -84,8 +67,6 @@ bool TimeProvider::Refresh() {
             static_cast<std::int64_t>(std::time(nullptr));
         offset_seconds_ =
             static_cast<std::int32_t>(server_timestamp - client_timestamp);
-        last_sync_time_ = std::chrono::steady_clock::now();
-        synchronized_ = true;
         SPDLOG_INFO(
             "Successfully synchronized with NTP server '{}'. "
             "Server timestamp: {}, "
@@ -98,9 +79,6 @@ bool TimeProvider::Refresh() {
       SPDLOG_WARN("Unknown error during NTP request to {}:{}", server, port);
     }
   }
-  // Отметку времени обновляем и при неудаче — иначе следующий же вызов снова
-  // пойдёт опрашивать все серверы.
-  last_sync_time_ = std::chrono::steady_clock::now();
   SPDLOG_ERROR(
       "Failed to get time from NTP server. "
       "Using local system time without synchronization");

@@ -14,7 +14,6 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <memory>
 #include <net/if.h>       // NOLINT(build/include_order)
 #include <net/if_utun.h>  // NOLINT(build/include_order)
-#include <poll.h>         // NOLINT(build/include_order)
 #include <string>
 #include <sys/ioctl.h>         // NOLINT(build/include_order)
 #include <sys/kern_control.h>  // NOLINT(build/include_order)
@@ -111,8 +110,6 @@ class DarwinTunDevice {
 
   [[nodiscard]] const std::string& GetName() const { return name_; }
 
-  [[nodiscard]] std::string GetActualIPv4Address() const { return ""; }
-
   bool ConfigureIPv4(const std::string& addr, int mask) {
     // Use ifconfig to set IPv4 address
     const std::string cmd = "ifconfig " + name_ + " inet " + addr + "/" +
@@ -166,29 +163,6 @@ class DarwinTunDevice {
     const int payload_size = static_cast<int>(n) - kAfHeaderSize;
     std::memcpy(buffer, read_buf_.get() + kAfHeaderSize, payload_size);
     return payload_size;
-  }
-
-  // Ожидание готовности дескриптора к чтению. Позволяет читателю блокироваться
-  // на событии вместо опроса неблокирующего дескриптора в цикле с задержкой.
-  bool WaitForReadable(int timeout_ms) {
-    if (fd_ < 0) {
-      return false;
-    }
-    struct pollfd pfd = {};
-    pfd.fd = fd_;
-    pfd.events = POLLIN;
-    return ::poll(&pfd, 1, timeout_ms) > 0 && (pfd.revents & POLLIN) != 0;
-  }
-
-  // Ожидание готовности к записи — см. комментарий в linux_tun_device.h.
-  bool WaitForWritable(int timeout_ms) {
-    if (fd_ < 0) {
-      return false;
-    }
-    struct pollfd pfd = {};
-    pfd.fd = fd_;
-    pfd.events = POLLOUT;
-    return ::poll(&pfd, 1, timeout_ms) > 0 && (pfd.revents & POLLOUT) != 0;
   }
 
   int Write(const void* data, int size) {

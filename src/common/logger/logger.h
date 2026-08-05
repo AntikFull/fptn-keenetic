@@ -7,11 +7,9 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #pragma once
 
 #include <clocale>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -28,6 +26,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <windows.h>
 #endif
 
+#include <spdlog/async.h>                     // NOLINT(build/include_order)
 #include <spdlog/sinks/rotating_file_sink.h>  // NOLINT(build/include_order)
 #include <spdlog/sinks/stdout_color_sinks.h>  // NOLINT(build/include_order)
 #include <spdlog/spdlog.h>                    // NOLINT(build/include_order)
@@ -42,11 +41,7 @@ inline bool init(const std::string& app_name) {
   std::wcout.imbue(std::locale(".UTF-8"));
 #endif
   std::locale::global(std::locale::classic());
-#ifndef _WIN32
-  ::setenv("LC_ALL", "C", 1);
-  ::setenv("LANG", "C", 1);
-#endif
-  setlocale(LC_ALL, "C");
+  setlocale(LC_ALL, "en_US.UTF-8");
   try {
 #ifdef __ANDROID__
     auto logger = spdlog::android_logger_mt("android", app_name);
@@ -60,17 +55,7 @@ inline bool init(const std::string& app_name) {
 #else
 
 #ifdef __linux__
-    // Каталог логов переопределяется через FPTN_LOG_DIR. Это нужно встраиваемым
-    // системам вроде KeeneticOS, где /var — это tmpfs (ОЗУ) и ротация логов
-    // расходовала бы оперативную память роутера вплоть до нехватки памяти.
-    const std::filesystem::path log_dir = []() {
-      if (const char* dir = getenv("FPTN_LOG_DIR")) {
-        if (dir[0] != '\0') {
-          return std::filesystem::path(dir);
-        }
-      }
-      return std::filesystem::path("/var/log/fptn/");
-    }();
+    const std::filesystem::path log_dir = "/var/log/fptn/";
 #elif defined(__APPLE__) && TARGET_OS_MAC
     const std::filesystem::path log_dir = []() {
       if (const char* home = getenv("HOME")) {
@@ -97,32 +82,14 @@ inline bool init(const std::string& app_name) {
         return false;
       }
     }
-    // Размер ротации тоже переопределяется окружением: на роутере разумно
-    // держать 1 МБ x 2, тогда как на сервере уместны прежние 12 МБ x 3.
-    const auto env_size_t = [](const char* name, std::size_t fallback) {
-      if (const char* value = getenv(name)) {
-        try {
-          const auto parsed = std::stoul(value);
-          if (parsed > 0) {
-            return static_cast<std::size_t>(parsed);
-          }
-        } catch (const std::exception&) {  // некорректное значение — берём по умолчанию
-        }
-      }
-      return fallback;
-    };
-    const std::size_t max_size_mb = env_size_t("FPTN_LOG_MAX_SIZE_MB", 12);
-    const std::size_t max_files = env_size_t("FPTN_LOG_MAX_FILES", 3);
-
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-        log_file.string(), max_size_mb * 1024 * 1024, max_files, true);
-    auto logger = std::make_shared<spdlog::logger>(
-        app_name, spdlog::sinks_init_list{console_sink, file_sink});
-    // Принудительный сброс только на ошибках: flush_on(debug) сбрасывал буфер на
-    // каждой строке, что на флеш-накопителе роутера ощутимо дорого.
-    // Остальное сбрасывается фоновым таймером ниже.
-    logger->flush_on(spdlog::level::err);
+        log_file.string(), 12 * 1024 * 1024, 3, true);
+    constexpr std::size_t kLogQueueSize = 32768;
+    spdlog::init_thread_pool(kLogQueueSize, 1);
+    auto logger = std::make_shared<spdlog::async_logger>(app_name,
+        spdlog::sinks_init_list{console_sink, file_sink},
+        spdlog::thread_pool(), spdlog::async_overflow_policy::overrun_oldest);
     spdlog::flush_every(std::chrono::seconds(3));
 #endif
 

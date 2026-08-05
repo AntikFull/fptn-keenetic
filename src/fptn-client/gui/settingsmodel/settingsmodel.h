@@ -151,6 +151,16 @@ class SettingsModel : public QObject {
   static constexpr const char* kBypassMethodSniRealitySafari26_4 =
       "SNI-REALITY-SAFARI-26-4";
 
+  static constexpr const char* kConnectionStrategyPersistent =
+      "persistent-tunnel";
+  static constexpr const char* kConnectionStrategyRolling = "rolling-tunnel";
+  static constexpr const char* kConnectionStrategyDual =
+      "dual-rolling-tunnel";
+  static constexpr const char* kConnectionStrategyTriple =
+      "triple-rolling-tunnel";
+  static constexpr const char* kConnectionStrategyBrowserMimicry =
+      "browser-mimicry";
+
  public:
   explicit SettingsModel(const QMap<QString, QString>& languages,
       const QString& default_language = "en",
@@ -204,6 +214,9 @@ class SettingsModel : public QObject {
   QString BypassMethod() const;
   void SetBypassMethod(const QString& method);
 
+  QString ConnectionStrategy() const;
+  void SetConnectionStrategy(const QString& strategy);
+
   SNIManagerSPtr SniManager() const;
 
   QVector<QString> BlacklistDomains() const;
@@ -223,6 +236,9 @@ class SettingsModel : public QObject {
 
   QVector<QString> SplitTunnelDomains();
   void SetSplitTunnelDomains(const QVector<QString>& domains);
+
+  QString CustomDns() const;
+  void SetCustomDns(const QString& dns);
 
 #if _WIN32
   bool EnableAdvancedDnsManagement() const;
@@ -260,6 +276,7 @@ class SettingsModel : public QObject {
   bool client_autostart_;
 
   QString bypass_method_;
+  QString connection_strategy_;
 
   QString blacklist_domains_;
   QString exclude_tunnel_networks_;
@@ -267,6 +284,8 @@ class SettingsModel : public QObject {
   bool enable_split_tunnel_;
   QString split_tunnel_mode_;
   QString split_tunnel_domains_;
+
+  QString custom_dns_;
 
   SNIManagerSPtr sni_manager_;
 };

@@ -8,10 +8,10 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 
 #include <atomic>
 #include <condition_variable>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include <queue>
@@ -35,10 +35,6 @@ class VpnManager final {
     fptn::routing::RouteManagerSPtr route_manager;
     fptn::common::network::TunInterfaceSPtr virtual_net_interface;
     fptn::plugin::PluginList plugins;
-    // Сколько раз супервизор пересоздаёт сессию целиком, прежде чем сдаться.
-    // 0 — не сдаваться никогда. При положительном значении внешний цикл
-    // самого fptn-client-cli заново выбирает сервер после исчерпания попыток.
-    int max_full_restarts = 10;
   };
 
  public:
@@ -50,7 +46,6 @@ class VpnManager final {
   std::size_t GetSendRate();
   std::size_t GetReceiveRate();
   bool IsStarted();
-  bool HasGivenUp() const;
   bool IsReconnecting() const;
   int ReconnectAttempt() const;
   int MaxReconnectAttempts() const;
@@ -66,10 +61,8 @@ class VpnManager final {
 
  private:
   mutable std::mutex mutex_;
-  // Очередь пакетов websocket -> TUN живёт под собственным мьютексом. Общий
-  // mutex_ держится в том числе во время отправки пакета, поэтому объединение
-  // этих двух блокировок сериализовало весь датапуть на одном локе.
   mutable std::mutex queue_mutex_;
+  static constexpr int kMaxFullRestarts_ = 10;
 
   std::atomic<bool> running_;
   std::atomic<bool> ever_connected_;

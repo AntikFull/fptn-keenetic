@@ -13,16 +13,15 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 
 namespace fptn::utils {
 
-bool WaitForSignal(fptn::vpn::VpnManager& vpn_client) {
+void WaitForSignal(fptn::vpn::VpnManager& vpn_client) {
   boost::asio::io_context io_context;
   boost::asio::signal_set signals(io_context, SIGINT, SIGTERM);
-  bool stopped_by_signal = false;
 
   boost::asio::steady_timer check_timer(io_context);
 
   std::function<void()> check_connection = [&]() {
-    if (vpn_client.HasGivenUp()) {
-      SPDLOG_ERROR("VPN supervisor исчерпал лимит полных перезапусков");
+    if (!vpn_client.IsStarted()) {
+      SPDLOG_ERROR("VPN connection lost! Exiting...");
       io_context.stop();
       return;
     }
@@ -35,10 +34,7 @@ bool WaitForSignal(fptn::vpn::VpnManager& vpn_client) {
     });
   };
 
-  signals.async_wait([&](auto, auto) {
-    stopped_by_signal = true;
-    io_context.stop();
-  });
+  signals.async_wait([&](auto, auto) { io_context.stop(); });
   check_timer.expires_after(std::chrono::seconds(1));
   check_timer.async_wait([&](const boost::system::error_code& ec) {
     if (!ec) {
@@ -46,6 +42,5 @@ bool WaitForSignal(fptn::vpn::VpnManager& vpn_client) {
     }
   });
   io_context.run();
-  return stopped_by_signal;
 }
 }  // namespace fptn::utils

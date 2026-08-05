@@ -34,8 +34,7 @@ Listener::Listener(std::uint16_t port,
     WebSocketOpenConnectionCallback ws_open_callback,
     WebSocketNewIPPacketCallback ws_new_ippacket_callback,
     WebSocketCloseConnectionCallback ws_close_callback)
-    : port_(port),
-      enable_detect_probing_(enable_detect_probing),
+    : enable_detect_probing_(enable_detect_probing),
       default_proxy_domain_(std::move(default_proxy_domain)),
       allowed_sni_list_(std::move(allowed_sni_list)),
       ioc_(ioc),
@@ -103,18 +102,26 @@ boost::asio::awaitable<void> Listener::Run() {
         socket.set_option(
             boost::asio::socket_base::send_buffer_size(kBufferSize));
 
-        auto session = std::make_shared<Session>(port_,
+        auto session = std::make_shared<Session>(
             // probing settings
             enable_detect_probing_, default_proxy_domain_, allowed_sni_list_,
             server_external_ips_, std::move(socket), ctx_,
             // handlers
             api_handles_, handshake_cache_manager_, ws_open_callback_,
             ws_new_ippacket_callback_, ws_close_callback_);
-        // run coroutine
+        // run coroutine on the session's own strand
         boost::asio::co_spawn(
-            ioc_,
+            session->GetExecutor(),
             [session]() mutable -> boost::asio::awaitable<void> {
-              co_await session->Run();
+              try {
+                co_await session->Run();
+              } catch (const std::exception& e) {
+                SPDLOG_ERROR("Session::Run exception: {}", e.what());
+                session->Close();
+              } catch (...) {
+                SPDLOG_ERROR("Session::Run unknown exception");
+                session->Close();
+              }
             },
             boost::asio::detached);
       } else if (running_) {

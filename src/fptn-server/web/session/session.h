@@ -35,8 +35,7 @@ using IObfuscator = std::optional<protocol::https::obfuscator::IObfuscatorSPtr>;
 
 class Session : public std::enable_shared_from_this<Session> {
  public:
-  explicit Session(std::uint16_t port,
-      bool enable_detect_probing,
+  explicit Session(bool enable_detect_probing,
       std::string default_proxy_domain,
       std::vector<std::string> allowed_sni_list,
       std::string server_external_ips,
@@ -51,6 +50,10 @@ class Session : public std::enable_shared_from_this<Session> {
   void Close();
 
   void Send(common::network::IPPacketPtr pkt);
+  void SendBatch(common::network::BatchIPPacketPtr pkts);
+
+  boost::asio::strand<boost::asio::any_io_executor> GetExecutor()
+      const noexcept;
 
   // async
   boost::asio::awaitable<void> Run();
@@ -66,7 +69,8 @@ class Session : public std::enable_shared_from_this<Session> {
     bool should_close;
   };
 
-  boost::asio::awaitable<ProbingResult> DetectProbing();
+  boost::asio::awaitable<ProbingResult> DetectProbing(
+      const std::uint8_t* client_hello, std::size_t size, std::string sni);
 
  protected:
   boost::asio::awaitable<bool> IsSniSelfProxyAttempt(
@@ -79,7 +83,9 @@ class Session : public std::enable_shared_from_this<Session> {
     bool should_close;
   };
 
-  boost::asio::awaitable<RealityResult> IsRealityHandshake();
+  RealityResult IsRealityHandshake(const std::uint8_t* client_hello,
+      std::size_t size,
+      std::string sni) const;
 
   // DEPRECATED
   boost::asio::awaitable<bool> PerformFakeHandshake(const std::string& sni);
@@ -87,6 +93,8 @@ class Session : public std::enable_shared_from_this<Session> {
   boost::asio::awaitable<bool> PerformFakeHandshake2(const std::string& sni);
 
   boost::asio::awaitable<bool> HandleProxy(const std::string& sni, int port);
+
+  boost::asio::awaitable<void> ProxyWithFallback(const std::string& sni);
 
   boost::asio::awaitable<IObfuscator> DetectObfuscator();
 
@@ -96,7 +104,9 @@ class Session : public std::enable_shared_from_this<Session> {
       const boost::beast::http::request<boost::beast::http::string_body>&
           request);
 
-  // deprecated
+  // deprecated (kept for backward compatibility with old-protocol clients):
+  // every such connection gets its own unique session id (a standalone 1:1
+  // logical client), unlike the new pooled path.
   boost::asio::awaitable<bool> HandleWebSocket(
       const boost::beast::http::request<boost::beast::http::string_body>&
           request);
@@ -110,7 +120,6 @@ class Session : public std::enable_shared_from_this<Session> {
 
   fptn::ClientID client_id_ = MAX_CLIENT_ID;
 
-  const std::uint16_t port_;
   const bool enable_detect_probing_;
   const std::string default_proxy_domain_;
   const std::vector<std::string> allowed_sni_list_;
@@ -145,6 +154,7 @@ class Session : public std::enable_shared_from_this<Session> {
   std::atomic<bool> full_queue_;
 
   bool support_batch_sending_;
+  bool use_yaff_serializer_;
 
   boost::asio::cancellation_signal cancel_signal_;
 };

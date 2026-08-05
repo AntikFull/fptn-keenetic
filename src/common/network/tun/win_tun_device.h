@@ -1,5 +1,6 @@
 /*=============================================================================
 Copyright (c) 2024-2026 Pavel Shpilev
+Copyright (c) 2024-2026 Stas Skokov
 
 Distributed under the MIT License (https://opensource.org/licenses/MIT)
 =============================================================================*/
@@ -49,7 +50,9 @@ class WinTunDevice {
   WinTunDevice& operator=(const WinTunDevice&) = delete;
 
   bool Open(const std::string& name) {
-    UuidCreate(&guid_);
+    static constexpr GUID kFptnTunGuid = {0x8F1A2B3C, 0x4D5E, 0x6F70,
+        {0x81, 0x92, 0xA3, 0xB4, 0xC5, 0xD6, 0xE7, 0xF8}};
+    guid_ = kFptnTunGuid;
 
     if (!wintun_) {
       return false;
@@ -80,8 +83,6 @@ class WinTunDevice {
   }
 
   [[nodiscard]] const std::string& GetName() const { return name_; }
-
-  [[nodiscard]] std::string GetActualIPv4Address() const { return ""; }
 
   bool ConfigureIPv4(const std::string& addr, int mask) {
     return SetIPAddressEntry(AF_INET, addr, mask);
@@ -135,26 +136,6 @@ class WinTunDevice {
       WaitForSingleObject(WintunGetReadWaitEvent(session_), 10);
     }
     return 0;
-  }
-
-  // Read выше уже ждёт события Wintun, поэтому возврат 0 означает остановку или
-  // ошибку. Небольшая пауза не даёт читателю уйти в плотный цикл в этом случае.
-  bool WaitForReadable(int timeout_ms) {
-    if (!session_) {
-      Sleep(static_cast<DWORD>(timeout_ms > 0 ? timeout_ms : 0));
-      return false;
-    }
-    return WaitForSingleObject(WintunGetReadWaitEvent(session_),
-               static_cast<DWORD>(timeout_ms)) == WAIT_OBJECT_0;
-  }
-
-  // У Wintun нет события «готов к записи»: WintunAllocateSendPacket либо сразу
-  // выделяет буфер в кольце, либо возвращает NULL при его переполнении.
-  // Поэтому здесь просто короткая пауза, чтобы цикл повторной отправки не
-  // превращался в плотный спин.
-  bool WaitForWritable(int timeout_ms) {
-    Sleep(static_cast<DWORD>(timeout_ms > 0 ? timeout_ms : 0));
-    return session_ != nullptr;
   }
 
   int Write(const void* data, int size) {

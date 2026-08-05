@@ -15,7 +15,6 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 
 #include <spdlog/spdlog.h>  // NOLINT(build/include_order)
 
-#include "fptn-protocol-lib/time/time_provider.h"
 
 namespace {
 std::chrono::seconds ReconnectBackoff(int full_restart_count) {
@@ -53,9 +52,6 @@ bool VpnManager::IsStarted() {
   if (gave_up_) {
     return false;
   }
-  // Однажды установленное соединение считается живым, пока супервизор не
-  // исчерпает попытки. Иначе внешний цикл ожидания (WaitForSignal) убивал бы
-  // процесс на первом же разрыве, не давая переподключиться.
   if (ever_connected_) {
     return true;
   }
@@ -64,13 +60,10 @@ bool VpnManager::IsStarted() {
 
 bool VpnManager::IsReconnecting() const { return reconnecting_; }
 
-bool VpnManager::HasGivenUp() const { return gave_up_; }
-
 int VpnManager::ReconnectAttempt() const { return reconnect_attempt_; }
 
-int VpnManager::MaxReconnectAttempts() const {
-  return config_.max_full_restarts;
-}
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
+int VpnManager::MaxReconnectAttempts() const { return kMaxFullRestarts_; }
 
 bool VpnManager::Start() {
   if (running_) {
@@ -86,10 +79,6 @@ bool VpnManager::Start() {
     }
   }
   running_ = true;
-  gave_up_ = false;
-  ever_connected_ = false;
-  reconnecting_ = false;
-  reconnect_attempt_ = 0;
 
   // NOLINTNEXTLINE(modernize-avoid-bind)
   config_.http_client->SetRecvIPPacketCallback(std::bind(
@@ -120,24 +109,7 @@ bool VpnManager::Start() {
     SPDLOG_ERROR(
         "Could not open TUN device after IP assignment; skipping route"
         "setup and marking the connection as down so it can recover");
-    running_ = false;
-    gave_up_ = true;
     return false;
-  }
-
-  if (config_.virtual_net_interface) {
-    const std::string actual_ip_str =
-        config_.virtual_net_interface->GetActualIPv4Address();
-    if (!actual_ip_str.empty()) {
-      fptn::common::network::IPv4Address actual_ip(actual_ip_str);
-      if (!actual_ip.IsEmpty()) {
-        SPDLOG_INFO("Actual TUN interface IPv4 address from kernel: {}",
-            actual_ip.ToString());
-        if (config_.http_client) {
-          config_.http_client->UpdateTunInterfaceAddressIPv4(actual_ip);
-        }
-      }
-    }
   }
 
   if (config_.route_manager) {
@@ -172,8 +144,6 @@ bool VpnManager::Stop() {
   ws_queue_cv_.notify_all();
   reconnect_cv_.notify_all();
 
-  // Супервизор обращается к config_.http_client, поэтому его нужно дождаться
-  // раньше, чем клиент будет сброшен ниже.
   if (supervisor_thread_.joinable()) {
     supervisor_thread_.join();
   }
@@ -243,18 +213,12 @@ std::string VpnManager::GetInterfaceName() const {
 
 void VpnManager::HandleOnPacketFromVirtualNetworkInterface(
     fptn::common::network::IPPacketPtr packet) {
-  if (!running_ || !packet) {
+  if (!running_) {
     return;
   }
 
   const std::unique_lock<std::mutex> lock(mutex_);  // mutex
 
-  // Адрес туннеля здесь НЕ обновляется. Раньше на каждый пакет вызывался
-  // UpdateTunInterfaceAddressIPv4(src_ip), то есть адресом интерфейса
-  // объявлялся src произвольного пакета. На роутере через TUN идёт форвардинг
-  // всей локальной сети, и любой пакет, не прошедший MASQUERADE, подставлял
-  // сюда адрес хоста из LAN — после чего весь входящий трафик переписывался
-  // на этот один адрес. Адрес интерфейса задаётся один раз, в Start().
   if (running_ && config_.http_client) {
     config_.http_client->Send(std::move(packet));
   }
@@ -268,7 +232,7 @@ void VpnManager::HandleOnPacketFromWebSocket(
 
   constexpr std::size_t kMaxQueueSize = 1024 * 16;
 
-  std::unique_lock<std::mutex> lock(queue_mutex_);  // mutex
+  std::unique_lock<std::mutex> lock(queue_mutex_);
 
   if (ws_packet_queue_.size() >= kMaxQueueSize) {
     SPDLOG_WARN("WebSocket packet queue is full, dropping packet");
@@ -282,10 +246,6 @@ void VpnManager::HandleOnPacketFromWebSocket(
 
 void VpnManager::ProcessWebSocketPackets() {
   while (running_) {
-    // Очередь вычерпывается целиком за одно пробуждение. Обработка по одному
-    // пакету стоила захвата двух мьютексов и пробуждения condition_variable на
-    // каждый пакет — на процессоре роутера это заметная доля стоимости
-    // пересылки.
     fptn::common::network::BatchIPPacketPtr batch;
     {
       std::unique_lock<std::mutex> lock(queue_mutex_);  // mutex
@@ -323,33 +283,23 @@ void VpnManager::ProcessWebSocketPackets() {
     }
 
     if (!to_send.empty()) {
-      const std::unique_lock<std::mutex> lock(mutex_);  // mutex
-      // cppcheck-suppress knownConditionTrueFalse
+      const std::unique_lock<std::mutex> lock(mutex_);
       if (running_ && config_.virtual_net_interface) {
-        for (auto& packet : to_send) {
-          config_.virtual_net_interface->Send(std::move(packet));
-        }
+        config_.virtual_net_interface->SendBatch(std::move(to_send));
       }
     }
   }
 }
 
 void VpnManager::Supervise() {
-  // 0 означает «не сдаваться»: на роутере выход из процесса оставляет без
-  // туннеля всю локальную сеть, а нажать «переподключить» там некому.
-  const int max_full_restarts = config_.max_full_restarts;
-  const bool unlimited = (max_full_restarts <= 0);
-
   int full_restart_count = 0;
   while (running_) {
     {
       std::unique_lock<std::mutex> lock(reconnect_mutex_);
-      reconnect_cv_.wait_for(lock, std::chrono::milliseconds(500), [this]() {
-        return !running_ ||
-               (config_.http_client && !config_.http_client->IsStarted());
-      });
+      reconnect_cv_.wait_for(lock, std::chrono::milliseconds(500),
+          [this]() { return !running_ || !config_.http_client->IsStarted(); });
     }
-    if (!running_ || !config_.http_client) {
+    if (!running_) {
       break;
     }
     if (config_.http_client->IsConnected()) {
@@ -366,35 +316,21 @@ void VpnManager::Supervise() {
       continue;
     }
 
-    if (!unlimited && full_restart_count >= max_full_restarts) {
+    if (full_restart_count >= kMaxFullRestarts_) {
       SPDLOG_ERROR("VPN reconnection failed after {} full restarts. Giving up.",
-          max_full_restarts);
-      if (config_.route_manager) {
-        config_.route_manager->Clean();
-      }
+          kMaxFullRestarts_);
+      config_.route_manager->Clean();
       reconnecting_ = false;
       gave_up_ = true;
       break;
     }
     ++full_restart_count;
     reconnect_attempt_ = full_restart_count;
-    if (unlimited) {
-      SPDLOG_WARN("Full VPN restart {}", full_restart_count);
-    } else {
-      SPDLOG_WARN(
-          "Full VPN restart {}/{}", full_restart_count, max_full_restarts);
-    }
+    SPDLOG_WARN(
+        "Full VPN restart {}/{}", full_restart_count, kMaxFullRestarts_);
 
     config_.http_client->Stop();
-    // route_manager отсутствует при --disable-routing: маршрутами на Keenetic
-    // управляет ndm, клиент к ним не прикасается.
-    if (config_.route_manager) {
-      config_.route_manager->Clean();
-    }
-    // Пере-синхронизация часов обязательна: у Keenetic нет батарейного RTC,
-    // при старте до поднятия WAN время заведомо неверное, а на нём строятся
-    // и TLS-рукопожатие, и проверка срока действия токена.
-    fptn::time::TimeProvider::Instance()->SyncWithNtp();
+    config_.route_manager->Clean();
 
     {
       std::unique_lock<std::mutex> lock(reconnect_mutex_);
@@ -405,9 +341,7 @@ void VpnManager::Supervise() {
       break;
     }
 
-    if (config_.route_manager && config_.virtual_net_interface) {
-      config_.route_manager->Apply(config_.virtual_net_interface->Name());
-    }
+    config_.route_manager->Apply(config_.virtual_net_interface->Name());
     config_.http_client->Start();
   }
 }

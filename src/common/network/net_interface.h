@@ -78,10 +78,6 @@ class BaseNetInterface {
 
   std::size_t GetReceiveRate() { return impl()->GetReceiveRateImpl(); }
 
-  std::string GetActualIPv4Address() {
-    return impl()->GetActualIPv4AddressImpl();
-  }
-
   void SetName(const std::string& name) { name_ = name; }
 
  private:
@@ -144,8 +140,6 @@ class BaseNetInterface {
  *   void SetMTU(int mtu);
  *   void BringUp();
  *   int  Read(void* buffer, int size);
- *   bool WaitForReadable(int timeout_ms);
- *   bool WaitForWritable(int timeout_ms);
  *   int  Write(const void* data, int size);
  *   void SetStopFlag(const std::atomic<bool>* running);
  *
@@ -186,11 +180,9 @@ class GenericTunInterface final
 
       /* set IPv6 */
       // cppcheck-suppress knownConditionTrueFalse
-      if (!this->IPv6Addr().IsEmpty()) {
-        if (!device_.ConfigureIPv6(
-                this->IPv6Addr().ToString(), this->IPv6Netmask())) {
-          SPDLOG_WARN("IPv6 configuration failed, continuing with IPv4 only");
-        }
+      if (!device_.ConfigureIPv6(
+              this->IPv6Addr().ToString(), this->IPv6Netmask())) {
+        SPDLOG_WARN("IPv6 configuration failed, continuing with IPv4 only");
       }
       /* set IPv4 */
       // cppcheck-suppress knownConditionTrueFalse
@@ -258,15 +250,7 @@ class GenericTunInterface final
     return receive_rate_calculator_.GetRateForSecond();
   }
 
-  std::string GetActualIPv4AddressImpl() const {
-    return device_.GetActualIPv4Address();
-  }
-
   void RunReader() {
-    // Сколько ждать готовности дескриптора, когда читать нечего. Таймаут нужен
-    // только чтобы периодически перепроверять running_ при остановке.
-    constexpr int kReadWaitMs = 200;
-
     const int mtu_size = this->MtuSize();
     const auto callback = this->GetRecvIPPacketCallback();
     const bool rate_calc = this->UsingRateCalculator();
@@ -285,26 +269,12 @@ class GenericTunInterface final
           }
         }
       } else {
-        // Раньше здесь стоял sleep_for(1ms). Дескриптор неблокирующий, поэтому
-        // в простое это давало около 2000 системных вызовов в секунду, а на
-        // нагрузке гранулярность 1 мс ограничивала пропускную способность.
-        // Теперь ждём готовности дескриптора и просыпаемся только по событию.
-        device_.WaitForReadable(kReadWaitMs);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
     }
   }
 
   void RunSender() {
-    // Дескриптор неблокирующий, поэтому неудачная запись возвращается сразу.
-    // Прежний цикл `do { Write } while (bytes != size && running_)` повторял
-    // её без единой паузы: при переполненной очереди устройства или пока
-    // интерфейс не поднят системой это давало 100% одного ядра и не
-    // прекращалось никогда. Теперь между попытками ждём готовности к записи, а
-    // безнадёжный пакет отбрасываем — потеря одного пакета дешевле, чем
-    // остановка пересылки для всех остальных.
-    constexpr int kWriteWaitMs = 50;
-    constexpr int kMaxWriteAttempts = 10;
-
     try {
       constexpr std::chrono::milliseconds kTimeout{100};
       static const bool kRateCalculator = this->UsingRateCalculator();
@@ -317,24 +287,14 @@ class GenericTunInterface final
             // send data
             if (!data.empty() && running_) {
               const int data_size = static_cast<int>(data.size());
-              for (int attempt = 0; attempt < kMaxWriteAttempts && running_;
-                  ++attempt) {
-                const int bytes_written = device_.Write(data.data(), data_size);
-                if (bytes_written == data_size) {
-                  if (kRateCalculator) {
-                    send_rate_calculator_.Update(bytes_written);
-                  }
-                  break;
+              int bytes_written = 0;
+              do {
+                // resend if error
+                bytes_written = device_.Write(data.data(), data_size);
+                if (bytes_written == data_size && kRateCalculator) {
+                  send_rate_calculator_.Update(bytes_written);
                 }
-                if (attempt + 1 == kMaxWriteAttempts) {
-                  SPDLOG_WARN(
-                      "TUN write failed after {} attempts, dropping packet "
-                      "({} bytes)",
-                      kMaxWriteAttempts, data_size);
-                  break;
-                }
-                device_.WaitForWritable(kWriteWaitMs);
-              }
+              } while (bytes_written != data_size && running_);
             }
           }
         }
