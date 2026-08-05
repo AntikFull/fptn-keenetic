@@ -225,6 +225,18 @@ int main(int argc, char* argv[]) {
             "  If --tunnel-mode=exclude: VPN skips these sites\n"
             "  If --tunnel-mode=include: VPN only for these sites\n"
             "Format: domain:com,domain:another.com,domain:sub.domainname.com");
+    args.add_argument("--disable-auto-fallback")
+        .default_value(false)
+        .implicit_value(true)
+        .help("Disable automatic fallback to other servers");
+    args.add_argument("--max-full-restarts")
+        .default_value(15)
+        .scan<'i', int>()
+        .help("Maximum full restart attempts before fallback");
+    args.add_argument("--startup-retry-delay")
+        .default_value(5)
+        .scan<'i', int>()
+        .help("Delay between connection retry attempts in seconds");
     // parse cmd arguments
     try {
       args.parse_args(argc, argv);
