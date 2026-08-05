@@ -55,11 +55,7 @@ class LinuxTunDevice {
     int fd = tun_->file_descriptor();
     if (fd >= 0) {
       int carrier = 1;
-      struct ifreq ifr;
-      std::memset(&ifr, 0, sizeof(ifr));
-      std::strncpy(ifr.ifr_name, name_.c_str(), IFNAMSIZ - 1);
-      ifr.ifr_settings.ifs_ifsu.raw_hdl = &carrier;
-      ::ioctl(fd, TUNSETCARRIER, &ifr.ifr_settings.ifs_ifsu.raw_hdl);
+      ::ioctl(fd, TUNSETCARRIER, &carrier);
     }
   }
 
