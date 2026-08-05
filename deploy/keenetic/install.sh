@@ -346,11 +346,11 @@ else
     ndmc -c "interface $USER_KTUN ip global 50000" 2>/dev/null || true
     # Подгонку MSS выполняет ndm; правила iptables TCPMSS для этого не нужны
     ndmc -c "interface $USER_KTUN ip tcp adjust-mss pmtu" 2>/dev/null || true
-    ndmc -c "access-list _WEBADMIN_$USER_KTUN permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0" 2>/dev/null || true
-    ndmc -c "interface $USER_KTUN ip access-group _WEBADMIN_$USER_KTUN in" 2>/dev/null || true
-    ndmc -c "access-list _WEBADMIN_$USER_KTUN auto-delete" 2>/dev/null || true
+    ndmc -c "access-list _WEBADMIN_$USER_KTUN permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0" >/dev/null 2>&1 || true
+    ndmc -c "interface $USER_KTUN ip access-group _WEBADMIN_$USER_KTUN in" >/dev/null 2>&1 || true
+    ndmc -c "access-list _WEBADMIN_$USER_KTUN auto-delete" >/dev/null 2>&1 || true
     ndmc -c "interface $USER_KTUN up" 2>/dev/null || true
-    ndmc -c "system configuration save" 2>/dev/null || true
+    ndmc -c "system configuration save" >/dev/null 2>&1 || true
     echo "Интерфейс $USER_KTUN успешно настроен / Interface $USER_KTUN successfully configured."
 fi
 
@@ -360,21 +360,25 @@ echo "[4/7] Настройка конфигурации Lighttpd / Configuring L
 LIGHTTPD_CONF_DIR="/opt/etc/lighttpd/conf.d"
 mkdir -p "$LIGHTTPD_CONF_DIR"
 
-GLOBAL_PORT=80
-if [ -f "/opt/etc/lighttpd/lighttpd.conf" ]; then
-    CONF_PORT=$(grep -oE "server.port\s*=\s*[0-9]+" /opt/etc/lighttpd/lighttpd.conf | tr -d ' ' | cut -d'=' -f2)
-    if [ -n "$CONF_PORT" ]; then
-        GLOBAL_PORT=$CONF_PORT
-    fi
-fi
-if [ -f "/opt/etc/lighttpd/conf.d/80-nfqws.conf" ]; then
-    NFQWS_PORT=$(grep -oE "server.port\s*:=\s*[0-9]+" /opt/etc/lighttpd/conf.d/80-nfqws.conf | tr -d ':' | cut -d'=' -f2)
-    if [ -n "$NFQWS_PORT" ]; then
-        GLOBAL_PORT=$NFQWS_PORT
-    fi
+IS_LIGHTTPD_LISTENING=no
+if netstat -tulnp 2>/dev/null | grep "lighttpd" | grep -qE ":${USER_PORT}\s"; then
+    IS_LIGHTTPD_LISTENING=yes
+elif netstat -tuln 2>/dev/null | grep "lighttpd" | grep -qE ":${USER_PORT}\s"; then
+    IS_LIGHTTPD_LISTENING=yes
 fi
 
-if [ "$USER_PORT" -eq "$GLOBAL_PORT" ]; then
+if [ "$IS_LIGHTTPD_LISTENING" != "yes" ]; then
+    for _cf in /opt/etc/lighttpd/lighttpd.conf /opt/etc/lighttpd/conf.d/*.conf; do
+        if [ -f "$_cf" ]; then
+            if grep -oE "server.port\s*[:=]+\s*${USER_PORT}\b" "$_cf" >/dev/null 2>&1; then
+                IS_LIGHTTPD_LISTENING=yes
+                break
+            fi
+        fi
+    done
+fi
+
+if [ "$IS_LIGHTTPD_LISTENING" = "yes" ]; then
     cat << 'EOF' > "$LIGHTTPD_CONF_DIR/85-fptn.conf"
 # Настройки веб-интерфейса FPTN
 server.modules += ( "mod_cgi" )
