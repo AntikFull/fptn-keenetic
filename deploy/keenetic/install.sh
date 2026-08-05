@@ -360,7 +360,28 @@ echo "[4/7] Настройка конфигурации Lighttpd / Configuring L
 LIGHTTPD_CONF_DIR="/opt/etc/lighttpd/conf.d"
 mkdir -p "$LIGHTTPD_CONF_DIR"
 
-cat << EOF > "$LIGHTTPD_CONF_DIR/85-fptn.conf"
+# Проверяем, задан ли уже server.port в существующих конфигах Lighttpd
+SERVER_PORT_DEFINED=no
+for _cf in /opt/etc/lighttpd/lighttpd.conf /opt/etc/lighttpd/conf.d/*.conf; do
+    if [ -f "$_cf" ] && [ "$_cf" != "$LIGHTTPD_CONF_DIR/85-fptn.conf" ]; then
+        if grep -oE "^\s*server\.port\s*[:=]" "$_cf" >/dev/null 2>&1; then
+            SERVER_PORT_DEFINED=yes
+            break
+        fi
+    fi
+done
+
+if [ "$SERVER_PORT_DEFINED" = "yes" ]; then
+    cat << EOF > "$LIGHTTPD_CONF_DIR/85-fptn.conf"
+# Настройки веб-интерфейса FPTN
+server.modules += ( "mod_cgi" )
+\$HTTP["url"] =~ "^/fptn/" {
+    cgi.assign = ( ".php" => "/opt/bin/php-cgi" )
+    static-file.exclude-extensions += ( ".php" )
+}
+EOF
+else
+    cat << EOF > "$LIGHTTPD_CONF_DIR/85-fptn.conf"
 # Настройки веб-интерфейса FPTN на порту $USER_PORT
 server.port = $USER_PORT
 server.modules += ( "mod_cgi" )
@@ -369,6 +390,7 @@ server.modules += ( "mod_cgi" )
     static-file.exclude-extensions += ( ".php" )
 }
 EOF
+fi
 
 echo "Перезапуск Lighttpd / Restarting Lighttpd..."
 /opt/etc/init.d/S80lighttpd restart || echo "Предупреждение: Не удалось перезапустить Lighttpd / Warning: Could not restart Lighttpd."
