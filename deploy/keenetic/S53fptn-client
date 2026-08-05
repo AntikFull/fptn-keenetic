@@ -40,48 +40,48 @@ mkdir -p "$FPTN_LOG_DIR" 2>/dev/null || true
 
 # MTU и адрес задаёт сам клиент, чтобы у интерфейса был единственный владелец
 # настроек
-ARGS="--access-token \"${TOKEN}\" --tun-interface-name \"${IFNAME}\" --tun-interface-ip \"${TUN_IP}\" --mtu-size \"${MTU}\" --disable-routing"
+ARGS="--access-token ${TOKEN} --tun-interface-name ${IFNAME} --tun-interface-ip ${TUN_IP} --mtu-size ${MTU} --disable-routing"
 
 if [ -n "$TUN_IPV6" ]; then
-    ARGS="${ARGS} --tun-interface-ipv6 \"${TUN_IPV6}\""
+    ARGS="${ARGS} --tun-interface-ipv6 ${TUN_IPV6}"
 fi
 
 if [ -n "$GATEWAY_IP" ]; then
-    ARGS="${ARGS} --gateway-ip \"${GATEWAY_IP}\""
+    ARGS="${ARGS} --gateway-ip ${GATEWAY_IP}"
 fi
 if [ -n "$GATEWAY_IPV6" ]; then
-    ARGS="${ARGS} --gateway-ipv6 \"${GATEWAY_IPV6}\""
+    ARGS="${ARGS} --gateway-ipv6 ${GATEWAY_IPV6}"
 fi
 if [ -n "$OUT_NETWORK_INTERFACE" ]; then
-    ARGS="${ARGS} --out-network-interface \"${OUT_NETWORK_INTERFACE}\""
+    ARGS="${ARGS} --out-network-interface ${OUT_NETWORK_INTERFACE}"
 fi
 if [ -n "$SERVER_SNI" ]; then
-    ARGS="${ARGS} --sni \"${SERVER_SNI}\""
+    ARGS="${ARGS} --sni ${SERVER_SNI}"
 fi
 if [ -n "$BYPASS_METHOD" ]; then
-    ARGS="${ARGS} --bypass-method \"${BYPASS_METHOD}\""
+    ARGS="${ARGS} --bypass-method ${BYPASS_METHOD}"
 fi
 if [ -n "$BLACKLIST_DOMAINS" ]; then
-    ARGS="${ARGS} --blacklist-domains \"${BLACKLIST_DOMAINS}\""
+    ARGS="${ARGS} --blacklist-domains ${BLACKLIST_DOMAINS}"
 fi
 if [ -n "$EXCLUDE_TUNNEL_NETWORKS" ]; then
-    ARGS="${ARGS} --exclude-tunnel-networks \"${EXCLUDE_TUNNEL_NETWORKS}\""
+    ARGS="${ARGS} --exclude-tunnel-networks ${EXCLUDE_TUNNEL_NETWORKS}"
 fi
 if [ -n "$INCLUDE_TUNNEL_NETWORKS" ]; then
-    ARGS="${ARGS} --include-tunnel-networks \"${INCLUDE_TUNNEL_NETWORKS}\""
+    ARGS="${ARGS} --include-tunnel-networks ${INCLUDE_TUNNEL_NETWORKS}"
 fi
 if [ "$SPLIT_TUNNEL" = "yes" ] && [ -n "$SPLIT_TUNNEL_DOMAINS" ]; then
-    ARGS="${ARGS} --enable-split-tunnel true --split-tunnel-mode \"${SPLIT_TUNNEL_MODE:-exclude}\" --split-tunnel-domains \"${SPLIT_TUNNEL_DOMAINS}\""
+    ARGS="${ARGS} --enable-split-tunnel true --split-tunnel-mode ${SPLIT_TUNNEL_MODE:-exclude} --split-tunnel-domains ${SPLIT_TUNNEL_DOMAINS}"
 fi
 if [ "$DISABLE_AUTO_FALLBACK" = "yes" ]; then
     ARGS="${ARGS} --disable-auto-fallback"
 fi
-ARGS="${ARGS} --max-full-restarts ${MAX_FULL_RESTARTS:-15} --startup-retry-delay ${STARTUP_RETRY_DELAY:-5}"
+# ARGS="${ARGS} --max-full-restarts ${MAX_FULL_RESTARTS:-15} --startup-retry-delay ${STARTUP_RETRY_DELAY:-5}"
 
 if [ -n "$PREFERRED_SERVER" ]; then
     # Нативный клиент проверяет список последовательно реальной авторизацией,
     # поэтому передаём все приоритеты и не дублируем сетевую проверку в shell.
-    ARGS="${ARGS} --preferred-server \"${PREFERRED_SERVER}\""
+    ARGS="${ARGS} --preferred-server ${PREFERRED_SERVER}"
 fi
 
 # Прежние версии этого скрипта добавляли правила через "iptables -I" при каждом
