@@ -32,9 +32,11 @@ endif()
 
 # Global project definitions
 
-if (FPTN_BUILD_ONLY_FPTN_LIB)
-else()
+if (FPTN_WITH_MIMALLOC)
   add_definitions(-DUSING_MIMALLOC)
+endif()
+
+if (NOT FPTN_BUILD_ONLY_FPTN_LIB)
   set(FPTN_WITH_LIBIDN2 ON)
   add_compile_definitions(FPTN_WITH_LIBIDN2)
 endif()

@@ -1,4 +1,4 @@
-﻿import os
+import os
 
 from conan import ConanFile
 from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
@@ -54,6 +54,22 @@ class YaffConan(ConanFile):
             "#include <string>",
             "#include <cstdint>\n#include <string>",
         )
+        # Fix missing std::bit_cast on GCC 11 MIPS cross-compiler
+        base_h = os.path.join(self.source_folder, "include", "yaff", "base.h")
+        replace_in_file(
+            self,
+            base_h,
+            "return std::bit_cast<float>(std::bit_cast<uint32_t>(v) ^ std::bit_cast<uint32_t>(d));",
+            "uint32_t vi, di; std::memcpy(&vi, &v, 4); std::memcpy(&di, &d, 4); vi ^= di; float res; std::memcpy(&res, &vi, 4); return res;",
+        )
+        replace_in_file(
+            self,
+            base_h,
+            "return std::bit_cast<double>(std::bit_cast<uint64_t>(v) ^ std::bit_cast<uint64_t>(d));",
+            "uint64_t vi, di; std::memcpy(&vi, &v, 8); std::memcpy(&di, &d, 8); vi ^= di; double res; std::memcpy(&res, &vi, 8); return res;",
+        )
+        replace_in_file(self, base_h, "inline constexpr float XorDef(float", "inline float XorDef(float")
+        replace_in_file(self, base_h, "inline constexpr double XorDef(double", "inline double XorDef(double")
 
     def generate(self):
         tc = CMakeToolchain(self)
