@@ -53,7 +53,7 @@ class LinuxTunDevice {
 
   void BringUp() {
     tun_->up();
-    int fd = tun_->file_descriptor();
+    int fd = tun_->native_handle();
     if (fd >= 0) {
       int carrier = 1;
       ::ioctl(fd, TUNSETCARRIER, &carrier);
@@ -72,7 +72,7 @@ class LinuxTunDevice {
     if (!tun_) {
       return false;
     }
-    int fd = tun_->file_descriptor();
+    int fd = tun_->native_handle();
     if (fd < 0) {
       return false;
     }

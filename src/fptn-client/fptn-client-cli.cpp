@@ -19,6 +19,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <argparse/argparse.hpp>
 #include <fmt/format.h>  // NOLINT(build/include_order)
 #include <fmt/ranges.h>  // NOLINT(build/include_order)
+#include <nlohmann/json.hpp>
 
 #include "common/logger/logger.h"
 #include "common/network/ip_address.h"

@@ -70,6 +70,10 @@ class YaffConan(ConanFile):
         )
         replace_in_file(self, base_h, "inline constexpr float XorDef(float", "inline float XorDef(float")
         replace_in_file(self, base_h, "inline constexpr double XorDef(double", "inline double XorDef(double")
+        # Fix missing std::ostringstream::view() on GCC 11
+        protoc_plugin_cpp = os.path.join(self.source_folder, "src", "protoc-plugin", "protoc_plugin.cpp")
+        replace_in_file(self, protoc_plugin_cpp, "headerOutput.view()", "headerOutput.str()")
+        replace_in_file(self, protoc_plugin_cpp, "sourceOutput.view()", "sourceOutput.str()")
 
     def generate(self):
         tc = CMakeToolchain(self)
