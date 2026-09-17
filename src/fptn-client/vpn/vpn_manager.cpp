@@ -62,8 +62,7 @@ bool VpnManager::IsReconnecting() const { return reconnecting_; }
 
 int VpnManager::ReconnectAttempt() const { return reconnect_attempt_; }
 
-// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
-int VpnManager::MaxReconnectAttempts() const { return kMaxFullRestarts_; }
+int VpnManager::MaxReconnectAttempts() const { return config_.max_full_restarts; }
 
 bool VpnManager::Start() {
   if (running_) {
@@ -292,14 +291,19 @@ void VpnManager::ProcessWebSocketPackets() {
 }
 
 void VpnManager::Supervise() {
+  const int max_full_restarts = config_.max_full_restarts;
+  const bool unlimited = (max_full_restarts <= 0);
+
   int full_restart_count = 0;
   while (running_) {
     {
       std::unique_lock<std::mutex> lock(reconnect_mutex_);
-      reconnect_cv_.wait_for(lock, std::chrono::milliseconds(2000),
-          [this]() { return !running_ || !config_.http_client->IsStarted(); });
+      reconnect_cv_.wait_for(lock, std::chrono::milliseconds(2000), [this]() {
+        return !running_ ||
+               (config_.http_client && !config_.http_client->IsStarted());
+      });
     }
-    if (!running_) {
+    if (!running_ || !config_.http_client) {
       break;
     }
     if (config_.http_client->IsConnected()) {
@@ -316,21 +320,29 @@ void VpnManager::Supervise() {
       continue;
     }
 
-    if (full_restart_count >= kMaxFullRestarts_) {
+    if (!unlimited && full_restart_count >= max_full_restarts) {
       SPDLOG_ERROR("VPN reconnection failed after {} full restarts. Giving up.",
-          kMaxFullRestarts_);
-      config_.route_manager->Clean();
+          max_full_restarts);
+      if (config_.route_manager) {
+        config_.route_manager->Clean();
+      }
       reconnecting_ = false;
       gave_up_ = true;
       break;
     }
     ++full_restart_count;
     reconnect_attempt_ = full_restart_count;
-    SPDLOG_WARN(
-        "Full VPN restart {}/{}", full_restart_count, kMaxFullRestarts_);
+    if (unlimited) {
+      SPDLOG_WARN("Full VPN restart {}", full_restart_count);
+    } else {
+      SPDLOG_WARN(
+          "Full VPN restart {}/{}", full_restart_count, max_full_restarts);
+    }
 
     config_.http_client->Stop();
-    config_.route_manager->Clean();
+    if (config_.route_manager) {
+      config_.route_manager->Clean();
+    }
 
     {
       std::unique_lock<std::mutex> lock(reconnect_mutex_);
@@ -341,7 +353,9 @@ void VpnManager::Supervise() {
       break;
     }
 
-    config_.route_manager->Apply(config_.virtual_net_interface->Name());
+    if (config_.route_manager && config_.virtual_net_interface) {
+      config_.route_manager->Apply(config_.virtual_net_interface->Name());
+    }
     config_.http_client->Start();
   }
 }

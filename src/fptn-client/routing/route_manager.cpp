@@ -1258,7 +1258,7 @@ fptn::common::network::IPv4Address GetDefaultGatewayIPAddress() {
 #ifdef __linux__
     const std::string command =
         "for ip in 8.8.8.8 8.8.4.4 77.88.8.8; do r=$(ip route get $ip "
-        "2>/dev/null | awk '{print $3; exit}'); [ -n \"$r\" ] && echo \"$r\" "
+        "2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"via\"){print $(i+1); exit} for(i=1;i<=NF;i++) if($i==\"src\"){print $(i+1); exit}}'); [ -n \"$r\" ] && echo \"$r\" "  // глушение-обосновано: ip route get возвращает ошибку при отсутствии маршрута, цикл пробует следующий IP
         "&& "
         "break; done";
 #elif __APPLE__
@@ -1337,7 +1337,7 @@ std::string GetDefaultNetworkInterfaceName() {
 #ifdef __linux__
     const std::string command =
         "for ip in 8.8.8.8 8.8.4.4 77.88.8.8; do r=$(ip route get $ip "
-        "2>/dev/null | awk '{print $5; exit}'); [ -n \"$r\" ] && echo \"$r\" "
+        "2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i==\"dev\"){print $(i+1); exit}}'); [ -n \"$r\" ] && echo \"$r\" "  // глушение-обосновано: ip route get возвращает ошибку при отсутствии маршрута, цикл пробует следующий IP
         "&& "
         "break; done";
 #elif __APPLE__

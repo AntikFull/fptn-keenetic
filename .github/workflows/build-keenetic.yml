@@ -29,7 +29,7 @@ jobs:
             strip: aarch64-linux-gnu-strip
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv8-a", "-mno-outline-atomics"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv8-a"
-            linkflags: '[]'
+            linkflags: '["-pthread"]'
           - arch-name: armv7
             conan-arch: armv7
             apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
@@ -38,7 +38,7 @@ jobs:
             strip: arm-linux-gnueabihf-strip
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
-            linkflags: '[]'
+            linkflags: '["-pthread", "-latomic"]'
           - arch-name: mipsel
             conan-arch: mips
             apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
@@ -47,7 +47,7 @@ jobs:
             strip: mipsel-linux-gnu-strip
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
-            linkflags: '[]'
+            linkflags: '["-pthread", "-latomic"]'
 
     steps:
       - name: Checkout code
@@ -106,7 +106,7 @@ jobs:
       - name: Configure CMake and Build
         run: |
           cd build
-          cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-static"
+          cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="-static -pthread"
           if ! cmake --build . --config Release --target fptn-client-cli -j$(nproc) -- VERBOSE=1; then
             echo "=== CONTENT OF link.txt ==="
             cat src/fptn-client/CMakeFiles/fptn-client-cli.dir/link.txt || true

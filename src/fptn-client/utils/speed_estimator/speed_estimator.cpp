@@ -61,15 +61,18 @@ ServerInfo FindFastestServer(const std::string& sni,
     const std::vector<ServerInfo>& servers,
     fptn::protocol::https::CensorshipStrategy censorship_strategy,
     int timeout_sec) {
-  // randomly select half of the servers
+  if (servers.empty()) {
+    throw std::runtime_error("All servers unavailable: server list is empty!");
+  }
+  // Перемешиваем серверы для равномерного распределения нагрузки
   std::vector<ServerInfo> shuffled_servers = servers;
   std::random_device rd;
   std::mt19937 generator(rd());
   std::ranges::shuffle(shuffled_servers, generator);
-  const std::size_t half_size =
-      std::max<std::size_t>(1, shuffled_servers.size() / 2);
+  const std::size_t count =
+      std::min<std::size_t>(shuffled_servers.size(), 4);
   std::vector<ServerInfo> selected_servers(
-      shuffled_servers.begin(), shuffled_servers.begin() + half_size);
+      shuffled_servers.begin(), shuffled_servers.begin() + count);
 
   struct State {
     std::mutex mtx;
@@ -81,9 +84,11 @@ ServerInfo FindFastestServer(const std::string& sni,
   auto state = std::make_shared<State>();
   state->total = selected_servers.size();
 
+  std::vector<std::thread> workers;
+  workers.reserve(selected_servers.size());
+
   for (const auto& server : selected_servers) {
-    // NOLINTNEXTLINE(bugprone-exception-escape)
-    std::thread([state, server, sni, timeout_sec, censorship_strategy]() {
+    workers.emplace_back([state, server, sni, timeout_sec, censorship_strategy]() {
       std::uint64_t ms = kMaxTimeout;
       try {
         ms = GetDownloadTimeMs(server, sni, timeout_sec, server.md5_fingerprint,
@@ -91,19 +96,29 @@ ServerInfo FindFastestServer(const std::string& sni,
       } catch (...) {  // NOLINT
       }
       {
-        const std::scoped_lock<std::mutex> lock(state->mtx);  // mutex
-        if (ms != kMaxTimeout && !state->first_server.has_value())
+        const std::scoped_lock<std::mutex> lock(state->mtx);
+        if (ms != kMaxTimeout && !state->first_server.has_value()) {
           state->first_server = server;
+        }
         ++state->completed;
       }
       state->cv.notify_one();
-    }).detach();
+    });
   }
 
-  std::unique_lock<std::mutex> lock(state->mtx);
-  state->cv.wait_for(lock, std::chrono::seconds(timeout_sec + 2), [&state] {
-    return state->first_server.has_value() || state->completed == state->total;
-  });
+  {
+    std::unique_lock<std::mutex> lock(state->mtx);
+    state->cv.wait_for(lock, std::chrono::seconds(timeout_sec + 2), [&state] {
+      return state->first_server.has_value() || state->completed == state->total;
+    });
+  }
+
+  // Дожидаемся завершения потоков для корректного освобождения ресурсов
+  for (auto& w : workers) {
+    if (w.joinable()) {
+      w.join();
+    }
+  }
 
   if (!state->first_server.has_value()) {
     throw std::runtime_error("All servers unavailable!");
@@ -116,14 +131,17 @@ std::optional<LoginResult> FindServerByLogin(const std::string& sni,
     const std::vector<ServerInfo>& servers,
     fptn::protocol::https::CensorshipStrategy censorship_strategy,
     int timeout_sec) {
+  if (servers.empty()) {
+    return std::nullopt;
+  }
   std::vector<ServerInfo> shuffled_servers = servers;
   std::random_device rd;
   std::mt19937 generator(rd());
   std::ranges::shuffle(shuffled_servers, generator);
-  const std::size_t half_size =
-      std::max<std::size_t>(1, shuffled_servers.size() / 2);
+  const std::size_t count =
+      std::min<std::size_t>(shuffled_servers.size(), 4);
   std::vector<ServerInfo> selected_servers(
-      shuffled_servers.begin(), shuffled_servers.begin() + half_size);
+      shuffled_servers.begin(), shuffled_servers.begin() + count);
 
   struct State {
     std::mutex mtx;
@@ -135,9 +153,11 @@ std::optional<LoginResult> FindServerByLogin(const std::string& sni,
   auto state = std::make_shared<State>();
   state->total = selected_servers.size();
 
+  std::vector<std::thread> workers;
+  workers.reserve(selected_servers.size());
+
   for (const auto& server : selected_servers) {
-    // NOLINTNEXTLINE(bugprone-exception-escape)
-    std::thread([state, server, sni, timeout_sec, censorship_strategy]() {
+    workers.emplace_back([state, server, sni, timeout_sec, censorship_strategy]() {
       std::optional<LoginResult> local;
       try {
         const std::string body =
@@ -158,18 +178,28 @@ std::optional<LoginResult> FindServerByLogin(const std::string& sni,
       }
       {
         const std::scoped_lock<std::mutex> lock(state->mtx);
-        if (local && !state->result.has_value())
+        if (local && !state->result.has_value()) {
           state->result = std::move(local);
+        }
         ++state->completed;
       }
       state->cv.notify_one();
-    }).detach();
+    });
   }
 
-  std::unique_lock<std::mutex> lock(state->mtx);
-  state->cv.wait_for(lock, std::chrono::seconds(timeout_sec + 2), [&state] {
-    return state->result.has_value() || state->completed == state->total;
-  });
+  {
+    std::unique_lock<std::mutex> lock(state->mtx);
+    state->cv.wait_for(lock, std::chrono::seconds(timeout_sec + 2), [&state] {
+      return state->result.has_value() || state->completed == state->total;
+    });
+  }
+
+  // Дожидаемся завершения потоков для предотвращения утечек стека и гонок
+  for (auto& w : workers) {
+    if (w.joinable()) {
+      w.join();
+    }
+  }
 
   return state->result;
 }

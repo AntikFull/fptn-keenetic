@@ -76,7 +76,7 @@ fi
 if [ "$DISABLE_AUTO_FALLBACK" = "yes" ]; then
     ARGS="${ARGS} --disable-auto-fallback"
 fi
-# ARGS="${ARGS} --max-full-restarts ${MAX_FULL_RESTARTS:-15} --startup-retry-delay ${STARTUP_RETRY_DELAY:-5}"
+ARGS="${ARGS} --max-full-restarts ${MAX_FULL_RESTARTS:-0} --startup-retry-delay ${STARTUP_RETRY_DELAY:-5}"
 
 if [ -n "$PREFERRED_SERVER" ]; then
     # Нативный клиент проверяет список последовательно реальной авторизацией,
@@ -108,7 +108,7 @@ cleanup_legacy_iptables() {
 case "$1" in
     start|restart) 
         cleanup_legacy_iptables
-        ip link delete "${IFNAME}" >/dev/null 2>&1 || true
+        ip link set dev "${IFNAME}" down >/dev/null 2>&1 || true
         ;;
 esac
 

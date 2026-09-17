@@ -26,15 +26,80 @@ $servers_file = "/opt/etc/fptn-servers.json";
 $cli_path = "/opt/bin/fptn-client-cli";
 $init_script = "/opt/etc/init.d/S53fptn-client";
 
-function parse_servers_from_token($token) {
-    global $servers_file;
-    if (file_exists($servers_file)) {
-        $json_data = json_decode(file_get_contents($servers_file), true);
-        if ($json_data && isset($json_data['servers'])) {
-            return $json_data['servers'];
+function parse_fptn_token_direct($token) {
+    $token = trim((string)$token);
+    if (empty($token)) {
+        return null;
+    }
+    // Удаляем стандартные URI-схемы и спецсимволы
+    $clean = preg_replace('/^(fptn:\/\/|fptn:)/i', '', $token);
+    $clean = preg_replace('/[\s\r\n\t=]+/', '', $clean);
+    
+    $decoded = base64_decode($clean, true);
+    if ($decoded !== false) {
+        $json = json_decode($decoded, true);
+        if ($json && !empty($json['servers']) && is_array($json['servers'])) {
+            return [
+                'service_name' => $json['service_name'] ?? 'FPTN',
+                'username' => $json['username'] ?? '',
+                'servers' => $json['servers']
+            ];
         }
     }
-    return [];
+    return null;
+}
+
+function parse_token_via_cli($token) {
+    global $cli_path;
+    if (!file_exists($cli_path) || !is_executable($cli_path)) {
+        return null;
+    }
+    $cmd = escapeshellcmd($cli_path) . " --access-token " . escapeshellarg($token) . " --show-servers 2>/dev/null";
+    $output = [];
+    $ret = 0;
+    exec($cmd, $output, $ret);
+    if ($ret === 0 && !empty($output)) {
+        $raw = implode("\n", $output);
+        $start = strpos($raw, '{');
+        $end = strrpos($raw, '}');
+        if ($start !== false && $end !== false && $end > $start) {
+            $json_str = substr($raw, $start, $end - $start + 1);
+            $parsed = json_decode($json_str, true);
+            if ($parsed && !empty($parsed['servers'])) {
+                return $parsed;
+            }
+        }
+    }
+    return null;
+}
+
+function get_token_servers_info($token) {
+    global $servers_file;
+    if (empty($token)) {
+        return null;
+    }
+    if (file_exists($servers_file) && filesize($servers_file) > 10) {
+        $cached = json_decode(file_get_contents($servers_file), true);
+        if ($cached && !empty($cached['servers'])) {
+            return $cached;
+        }
+    }
+    $info = parse_fptn_token_direct($token);
+    if ($info) {
+        @file_put_contents($servers_file, json_encode($info, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+        return $info;
+    }
+    $cli_info = parse_token_via_cli($token);
+    if ($cli_info) {
+        @file_put_contents($servers_file, json_encode($cli_info, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+        return $cli_info;
+    }
+    return null;
+}
+
+function parse_servers_from_token($token) {
+    $info = get_token_servers_info($token);
+    return $info['servers'] ?? [];
 }
 
 // Конфигурация Сервера FPTN
@@ -596,41 +661,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $error = 'Ошибка безопасности: неверный CSRF токен. Перезагрузите страницу.';
             } else {
                 if ($action === 'save_token') {
-                    $token = trim($_POST['token']);
+                    $token = trim((string)($_POST['token'] ?? ''));
                     if (empty($token)) {
-                        $error = 'Токен не может быть пустым';
+                        $error = 'Токен не может быть пустым.';
                     } else {
-                        if (!file_exists($cli_path)) {
-                            $error = 'Клиент fptn-client-cli не найден в /opt/bin/. Сначала соберите и загрузите его.';
-                        } else {
-                            $cmd = $cli_path . " --access-token " . escapeshellarg($token) . " --show-servers 2>&1";
-                            exec($cmd, $output, $return_var);
-                            
-                            if ($return_var === 0) {
-                                $json_str = implode("\n", $output);
-                                $json_start = strpos($json_str, '{');
-                                $json_end = strrpos($json_str, '}');
-                                if ($json_start !== false && $json_end !== false && $json_end > $json_start) {
-                                    $json_str = substr($json_str, $json_start, $json_end - $json_start + 1);
-                                }
-                                $parsed = json_decode($json_str, true);
-                                if ($parsed && isset($parsed['servers'])) {
-                                    file_put_contents($servers_file, $json_str);
-                                    $config['TOKEN'] = $token;
-                                    write_config();
-                                    $message = 'Токен успешно сохранен и проверен! Служба: ' . htmlspecialchars($parsed['service_name']);
-                                    
-                                    if ($service_running) {
-                                        $cmd = $init_script . " restart 2>&1";
-                                        exec($cmd, $restart_output, $restart_return);
-                                        $message .= ' Служба автоматически перезапущена.';
-                                    }
-                                } else {
-                                    $error = 'Не удалось распарсить список серверов из ответа клиента.';
-                                }
-                            } else {
-                                $error = 'Ошибка проверки токена: ' . htmlspecialchars(implode(" ", $output));
+                        @unlink($servers_file);
+                        $parsed = parse_fptn_token_direct($token);
+                        if (!$parsed) {
+                            $parsed = parse_token_via_cli($token);
+                        }
+
+                        if ($parsed && !empty($parsed['servers']) && is_array($parsed['servers'])) {
+                            @file_put_contents($servers_file, json_encode($parsed, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX);
+                            $config['TOKEN'] = $token;
+                            write_config();
+                            $svc = htmlspecialchars($parsed['service_name'] ?? 'FPTN');
+                            $srv_count = count($parsed['servers']);
+                            $message = "Токен сохранён и проверен (серверов: {$srv_count}, подписка: {$svc}).";
+
+                            if ($service_running) {
+                                $cmd = $init_script . " restart 2>&1";
+                                exec($cmd, $restart_output, $restart_return);
+                                $message .= ' Служба автоматически перезапущена.';
                             }
+                        } else {
+                            $config['TOKEN'] = $token;
+                            write_config();
+                            $error = 'Токен записан в конфигурацию, но список серверов не удалось распарсить. Проверьте правильность токена.';
                         }
                     }
                 }
@@ -745,14 +802,12 @@ if ($ip_status === 0 && !empty($ip_output)) {
 $servers_data = [];
 $service_title = '—';
 if (!empty($config['TOKEN'])) {
-    if (file_exists($servers_file)) {
-        $json_data = json_decode(file_get_contents($servers_file), true);
-        if ($json_data) {
-            $servers_data = $json_data['servers'] ?? [];
-            if (isset($json_data['service_name'])) {
-                $service_title = htmlspecialchars($json_data['service_name']);
-            }
-        }
+    $token_info = get_token_servers_info($config['TOKEN']);
+    if ($token_info && !empty($token_info['servers'])) {
+        $servers_data = $token_info['servers'];
+        $service_title = htmlspecialchars($token_info['service_name'] ?? 'FPTN');
+    } else {
+        $service_title = '<span style="color: #f59e0b;">Токен задан, список серверов обновляется</span>';
     }
 } else {
     $service_title = '<span style="color: #ef4444;">Токен не задан</span>';

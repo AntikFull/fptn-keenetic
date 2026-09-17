@@ -35,6 +35,8 @@ class VpnManager final {
     fptn::routing::RouteManagerSPtr route_manager;
     fptn::common::network::TunInterfaceSPtr virtual_net_interface;
     fptn::plugin::PluginList plugins;
+    // Количество полных перезапусков до остановки. 0 — не сдаваться никогда (режим роутера)
+    int max_full_restarts = 10;
   };
 
  public:

@@ -66,7 +66,7 @@ inline bool run_batch(const std::vector<std::string>& commands) {
 #ifdef _WIN32
     ok = run("cmd /c \"" + joined + "\"") && ok;
 #else
-    ok = run("bash -c \"" + joined + "\"") && ok;
+    ok = run("sh -c \"" + joined + "\"") && ok;
 #endif
     joined.clear();
     count = 0;
@@ -95,7 +95,12 @@ inline bool run(
     boost::process::v1::child child(command, boost::process::v1::std_out > pipe,
         ::boost::process::v1::windows::hide);
 #elif defined(__linux__) || defined(__APPLE__)
-    boost::process::v1::child child(boost::process::v1::search_path("bash"),
+    // Встраиваемые роутеры Keenetic и Entware поставляются с BusyBox /bin/sh без bash
+    auto shell_path = boost::process::v1::search_path("sh");
+    if (shell_path.empty()) {
+      shell_path = boost::process::v1::search_path("bash");
+    }
+    boost::process::v1::child child(shell_path.empty() ? "/bin/sh" : shell_path,
         "-c", command, boost::process::v1::std_out > pipe);
 #endif
     std::string line;

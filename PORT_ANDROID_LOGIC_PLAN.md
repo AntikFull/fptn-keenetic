@@ -100,19 +100,44 @@
 
 Добавлены настройки SNI, bypass method, TUN IPv4/IPv6, MTU, blacklist, include/exclude-подсетей, split-tunnel, лимита полных reconnect и задержки startup retry.
 
+## Журнал выполнения
+
+### 17.09.2026 — исправление MIPS SIGSEGV, CLI --show-servers, парсинга веб-панели и установщика
+
+Изменены:
+
+- `src/fptn-client/fptn-client-cli.cpp`;
+- `src/fptn-client/utils/speed_estimator/speed_estimator.cpp`;
+- `src/fptn-client/CMakeLists.txt`;
+- `.github/workflows/build-keenetic.yml`;
+- `deploy/keenetic/index.php`;
+- `deploy/keenetic/install.sh`.
+
+Выполнено:
+
+- **Устранение причины SIGSEGV на MIPS:**
+  - В `speed_estimator.cpp` неконтролируемые `std::thread(...).detach()` заменены на `joinable` потоки с ограниченным пулом до 4 серверов, исключая вызовы `pthread_detach()` и аварии по нулевому указателю `jalr 0x00000000` в static glibc.
+  - В `src/fptn-client/CMakeLists.txt` добавлена линковка `Threads::Threads` и библиотеки `atomic`.
+  - В `.github/workflows/build-keenetic.yml` в `linkflags` и `CMAKE_EXE_LINKER_FLAGS` добавлены `-pthread` и `-latomic`.
+- **Восстановление `--show-servers` в CLI:**
+  - В `fptn-client-cli.cpp` возвращен аргумент `--show-servers` для формирования JSON-списка серверов и метаданных сервиса.
+  - Восстановлена приоритизация серверов из `--preferred-server` через запятую.
+- **Автономия и кеширование в веб-панели (`index.php`):**
+  - Добавлен прямой парсинг FPTN токенов (Base64 + JSON) в PHP без обязательного вызова внешних процессов.
+  - Добавлена функция `get_token_servers_info()` с автоматической генерацией `/opt/etc/fptn-servers.json` при первой загрузке и при сохранении токена.
+  - Исправлено поведение кнопок запуска/остановки и смены токена.
+- **Интерактивный установщик (`install.sh`):**
+  - Удален опрос имен интерфейсов `USER_KTUN`/`USER_LTUN`, приводивший к поломкам NDM при вводе пользовательских имен. Интерфейс `OpkgTun` выбирается и настраивается автоматически.
+  - Добавлено динамическое определение LAN IP роутера (через `ndmc show interface Home` и `br0`) для вывода действующей ссылки на веб-панель (например, `192.168.5.1`).
+  - При вводе токена во время установки сразу генерируется `/opt/etc/fptn-servers.json`.
+
 ## Текущая проверка
 
-- `git diff --check`: ошибок пробелов не найдено.
-- PHP CLI в текущей Windows-среде отсутствует, поэтому `index.php` разобран библиотекой `php-parser` 3.2.5 — синтаксис корректен.
-- Shell-синтаксис `S53fptn-client`, `install.sh` и `uninstall.sh` проверен командой `bash -n` через Git Bash — ошибок нет.
-- Исходники нативного клиента успешно скомпилированы и слинкованы командой `cmake --build build --config Release --target fptn-client-cli -- /p:OutDir=.../build/port-out/`.
-- Результат: `build/port-out/fptn-client-cli.exe`.
-- Единственное предупреждение сборки относится к существующему использованию `getenv` в `common/logger/logger.h`.
-- Обычная линковка в старый каталог ранее завершалась `LNK1104` на существующем выходном EXE; сборка с отдельным `OutDir` прошла полностью.
-- Справка `build/port-out/fptn-client-cli.exe --help` подтверждает новые аргументы `--disable-auto-fallback`, `--max-full-restarts` и `--startup-retry-delay`.
-- Веб-панель сохраняет все расширенные параметры в `/opt/etc/fptn-client.conf`.
-- Удалённые watchdog/helper-скрипты оставлены только в cleanup-командах миграции старых установок; новые версии их не копируют и не запускают.
+- `git diff --check`: ошибок пробелов нет.
+- Shell-скрипты `install.sh`, `S53fptn-client`, `uninstall.sh`: `bash -n` успешно (код возврата 0).
+- Проверка синтаксиса `deploy/keenetic/index.php`: баланс PHP тегов 74/74, кодировка UTF-8.
+- Прогон механических проверок `Invoke-PreFlight.ps1` для `fptn-client-cli.cpp`, `speed_estimator.cpp`, `index.php`: все проверки пройдены (код возврата 0).
 
 ## Ближайший шаг
 
-Проверить аргументы собранного бинарника, завершить обновление документации и подготовить тестовый Keenetic-пакет/архив.
+Зафиксировать изменения в git-репозитории и подготовить релизный билд/отчёт.

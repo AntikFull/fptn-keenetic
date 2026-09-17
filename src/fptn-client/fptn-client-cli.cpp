@@ -61,6 +61,10 @@ int main(int argc, char* argv[]) {
     argparse::ArgumentParser args("fptn-client", FPTN_VERSION);
     // Required arguments
     args.add_argument("--access-token").required().help("Access token");
+    args.add_argument("--disable-routing")
+        .default_value(false)
+        .implicit_value(true)
+        .help("Disable automatic routing configuration");
     // Optional arguments
     args.add_argument("--out-network-interface")
         .default_value("")
@@ -237,6 +241,10 @@ int main(int argc, char* argv[]) {
         .default_value(5)
         .scan<'i', int>()
         .help("Delay between connection retry attempts in seconds");
+    args.add_argument("--show-servers")
+        .default_value(false)
+        .implicit_value(true)
+        .help("Show servers from token in JSON format and exit");
     // parse cmd arguments
     try {
       args.parse_args(argc, argv);
@@ -254,8 +262,15 @@ int main(int argc, char* argv[]) {
       return EXIT_FAILURE;
     }
 
+    const bool disable_routing = args.get<bool>("--disable-routing");
+    const int max_full_restarts = args.get<int>("--max-full-restarts");
+    const int startup_retry_delay =
+        std::max(0, args.get<int>("--startup-retry-delay"));
+
 #ifdef __linux__
-    fptn::routing::HealStaleResolvConf();
+    if (!disable_routing) {
+      fptn::routing::HealStaleResolvConf();
+    }
 #endif
 
     /* parse cmd args */
@@ -285,24 +300,28 @@ int main(int argc, char* argv[]) {
     const auto sni = args.get<std::string>("--sni");
 
     /* check gateway address */
-    const auto using_gateway_ip =
-        gateway_ip.IsEmpty()
-            ? fptn::routing::GetDefaultGatewayIPAddress()
-            : fptn::common::network::IPv4Address::Create(gateway_ip);
-    const auto using_gateway_ipv6 =
-        gateway_ipv6.IsEmpty()
-            ? fptn::routing::GetDefaultGatewayIPv6Address()
-            : fptn::common::network::IPv6Address::Create(gateway_ipv6);
-    if (using_gateway_ip.IsEmpty()) {
-      SPDLOG_ERROR(
-          "Unable to find the default gateway IP address. "
-          "Please check your connection and make sure no other VPN is active. "
-          "If the error persists, specify the gateway address in the FPTN "
-          "settings using your router's IP "
-          "address with the \"--gateway-ip\" option. If the issue "
-          "remains unresolved, please contact the developer via Telegram "
-          "@fptn_chat.");
-      return EXIT_FAILURE;
+    fptn::common::network::IPv4Address using_gateway_ip;
+    fptn::common::network::IPv6Address using_gateway_ipv6;
+    if (!disable_routing) {
+      using_gateway_ip =
+          gateway_ip.IsEmpty()
+              ? fptn::routing::GetDefaultGatewayIPAddress()
+              : fptn::common::network::IPv4Address::Create(gateway_ip);
+      using_gateway_ipv6 =
+          gateway_ipv6.IsEmpty()
+              ? fptn::routing::GetDefaultGatewayIPv6Address()
+              : fptn::common::network::IPv6Address::Create(gateway_ipv6);
+      if (using_gateway_ip.IsEmpty()) {
+        SPDLOG_ERROR(
+            "Unable to find the default gateway IP address. "
+            "Please check your connection and make sure no other VPN is active. "
+            "If the error persists, specify the gateway address in the FPTN "
+            "settings using your router's IP "
+            "address with the \"--gateway-ip\" option. If the issue "
+            "remains unresolved, please contact the developer via Telegram "
+            "@fptn_chat.");
+        return EXIT_FAILURE;
+      }
     }
 
     using fptn::protocol::https::CensorshipStrategy;
@@ -396,13 +415,47 @@ int main(int argc, char* argv[]) {
     std::string pre_obtained_token;
     try {
       config.Parse();
+      if (args.get<bool>("--show-servers")) {
+        nlohmann::json j;
+        j["service_name"] = config.GetServiceName();
+        j["username"] = config.GetUsername();
+        j["servers"] = nlohmann::json::array();
+        for (const auto& s : config.GetServers()) {
+          nlohmann::json sj;
+          sj["name"] = s.name;
+          sj["host"] = s.host;
+          sj["port"] = s.port;
+          sj["md5_fingerprint"] = s.md5_fingerprint;
+          j["servers"].push_back(sj);
+        }
+        std::cout << j.dump() << std::endl;
+        return EXIT_SUCCESS;
+      }
       bool use_login_race = preferred_server.empty();
       if (!preferred_server.empty()) {
-        auto server_opt = config.GetServer(preferred_server);
-        if (server_opt.has_value()) {
-          selected_server = std::move(*server_opt);
-        } else {
-          SPDLOG_WARN("Server '{}' does not exist! Check your token!",
+        const std::vector<std::string> pref_servers =
+            fptn::common::utils::SplitCommaSeparated(preferred_server);
+        bool found = false;
+        for (const auto& s_name : pref_servers) {
+          auto server_opt = config.GetServer(s_name);
+          if (server_opt.has_value()) {
+            const auto check_ip = fptn::routing::ResolveDomain(server_opt->host);
+            if (!check_ip.IsEmpty()) {
+              selected_server = std::move(*server_opt);
+              found = true;
+              SPDLOG_INFO("Selected preferred server: {}", selected_server.name);
+              break;
+            } else {
+              SPDLOG_WARN("DNS resolve failed for preferred server '{}' ({})",
+                  s_name, server_opt->host);
+            }
+          } else {
+            SPDLOG_WARN("Preferred server '{}' does not exist in token!", s_name);
+          }
+        }
+        if (!found) {
+          SPDLOG_WARN(
+              "None of preferred servers in '{}' are reachable. Falling back to auto-selection.",
               preferred_server);
           use_login_race = true;
         }
@@ -498,33 +551,36 @@ int main(int argc, char* argv[]) {
                 .ipv6_netmask = 126});
 
     // route manager
-    auto route_manager = std::make_shared<fptn::routing::RouteManager>(
-        fptn::routing::RouteManager::Config{
-            .out_interface_name = out_network_interface_name,
-            .tun_interface_address_ipv4 = tun_interface_address_ipv4,
-            .tun_interface_address_ipv6 = tun_interface_address_ipv6,
-            .vpn_server_ip = server_ip,
-            .dns_server_ipv4 = dns_server_ipv4,
-            .dns_server_ipv6 = dns_server_ipv6,
-            .gateway_ipv4 = gateway_ip,
-            .gateway_ipv6 = gateway_ipv6,
-            .exclude_networks = exclude_networks,
-            .include_networks = include_networks
+    fptn::routing::RouteManagerSPtr route_manager = nullptr;
+    if (!disable_routing) {
+      route_manager = std::make_shared<fptn::routing::RouteManager>(
+          fptn::routing::RouteManager::Config{
+              .out_interface_name = out_network_interface_name,
+              .tun_interface_address_ipv4 = tun_interface_address_ipv4,
+              .tun_interface_address_ipv6 = tun_interface_address_ipv6,
+              .vpn_server_ip = server_ip,
+              .dns_server_ipv4 = dns_server_ipv4,
+              .dns_server_ipv6 = dns_server_ipv6,
+              .gateway_ipv4 = using_gateway_ip,
+              .gateway_ipv6 = using_gateway_ipv6,
+              .exclude_networks = exclude_networks,
+              .include_networks = include_networks
 #if _WIN32
-            ,
-            .enable_advanced_dns_management = false
+              ,
+              .enable_advanced_dns_management = false
 #endif
-        });
+          });
+    }
 
     /* plugins */
     std::vector<fptn::plugin::BasePluginPtr> client_plugins;
-    if (!blacklist_domains.empty()) {
+    if (!blacklist_domains.empty() && route_manager) {
       auto blacklist_plugin = std::make_unique<fptn::plugin::DomainBlacklist>(
           blacklist_domains, route_manager);
       client_plugins.push_back(std::move(blacklist_plugin));
     }
 
-    if (enable_split_tunnel) {
+    if (enable_split_tunnel && route_manager) {
       const auto policy = tunnel_mode == "exclude"
                               ? fptn::routing::RoutingPolicy::kExcludeFromVpn
                               : fptn::routing::RoutingPolicy::kIncludeInVpn;
@@ -536,9 +592,12 @@ int main(int argc, char* argv[]) {
     /* vpn client */
     fptn::vpn::VpnManager vpn_client(
         fptn::vpn::VpnManager::Config{.http_client = std::move(http_client),
-            .route_manager = route_manager,
+            .route_manager = disable_routing ? nullptr : route_manager,
             .virtual_net_interface = virtual_network_interface,
-            .plugins = std::move(client_plugins)});
+            .plugins = std::move(client_plugins),
+            // В режиме роутера сдаваться нельзя: за клиентом стоит вся локальная
+            // сеть, супервизор переподключается бесконечно (max_full_restarts = 0)
+            .max_full_restarts = disable_routing ? 0 : max_full_restarts});
 
     vpn_client.Start();
 
@@ -546,7 +605,9 @@ int main(int argc, char* argv[]) {
     fptn::utils::WaitForSignal(vpn_client);
 
     /* clean */
-    route_manager->Clean();
+    if (route_manager) {
+      route_manager->Clean();
+    }
     vpn_client.Stop();
     spdlog::shutdown();
     return EXIT_SUCCESS;

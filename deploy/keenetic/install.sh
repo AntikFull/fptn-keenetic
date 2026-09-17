@@ -213,11 +213,8 @@ elif which ndmc >/dev/null 2>&1; then
     done
 fi
 
-printf "Введите имя интерфейса в KeeneticOS / Enter KeeneticOS interface name (default %s): " "$DEFAULT_KTUN"
-read_input USER_KTUN "$DEFAULT_KTUN"
-
-printf "Введите имя интерфейса в Linux/TUN / Enter Linux/TUN interface name (default %s): " "$DEFAULT_LTUN"
-read_input USER_LTUN "$DEFAULT_LTUN"
+USER_KTUN="$DEFAULT_KTUN"
+USER_LTUN="$DEFAULT_LTUN"
 
 if [ -n "$PREV_TOKEN" ]; then
     printf "Найден токен [%s...]. Нажмите Enter для сохранения или введите новый / Existing token found [%s...]. Press Enter to keep or type new: " "$(echo "$PREV_TOKEN" | cut -c 1-12)" "$(echo "$PREV_TOKEN" | cut -c 1-12)"
@@ -230,8 +227,7 @@ fi
 echo ""
 echo "Параметры установки / Installation Parameters:"
 echo "  Веб-порт / Web Port:               $USER_PORT"
-echo "  Интерфейс KeeneticOS / OS Interface: $USER_KTUN"
-echo "  Интерфейс Linux TUN / TUN Interface: $USER_LTUN"
+echo "  Интерфейс KeeneticOS / OS Interface: $USER_KTUN ($USER_LTUN)"
 if [ -n "$USER_TOKEN" ]; then
     echo "  Токен подписки / Subscription Token: [Указан / Specified]"
 else
@@ -487,6 +483,29 @@ WEB_PASSWORD="${CONF_PASS}"
 EOF
 chmod 600 "$CONF_PATH"
 
+# Генерация списка серверов, если токен был указан при установке
+if [ -n "$USER_TOKEN" ]; then
+    echo "Формирование списка серверов из токена / Generating server list from token..."
+    if [ -x "/opt/bin/fptn-client-cli" ]; then
+        /opt/bin/fptn-client-cli --access-token "$USER_TOKEN" --show-servers > /opt/etc/fptn-servers.json 2>/dev/null || true  # глушение-обосновано: первичный разбор токена может вернуть ошибку при невалидном токене
+    fi
+    if [ ! -s "/opt/etc/fptn-servers.json" ]; then
+        # Резервный разбор через PHP CGI
+        /opt/bin/php-cgi -q -r '
+            $token = trim($argv[1] ?? "");
+            $clean = preg_replace("/^(fptn:\/\/|fptn:)/i", "", $token);
+            $clean = preg_replace("/[\s\r\n\t=]+/", "", $clean);
+            $dec = base64_decode($clean, true);
+            if ($dec) {
+                $j = json_decode($dec, true);
+                if (!empty($j["servers"])) {
+                    file_put_contents("/opt/etc/fptn-servers.json", json_encode($j, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+                }
+            }
+        ' -- "$USER_TOKEN" 2>/dev/null || true  # глушение-обосновано: резервный парсер в случае отсутствия PHP модулей
+    fi
+fi
+
 # Повторная настройка интерфейса здесь удалена намеренно.
 # Ранее этот блок назначал 172.20.0.2/255.255.0.0 и ip defaultgateway 172.20.0.1
 # поверх уже настроенного выше 10.0.0.1/255.255.255.255. Три разных адреса с
@@ -513,18 +532,29 @@ chmod 755 /opt/etc/init.d/S53fptn-client
 echo ""
 echo "[8/8] Внешний watchdog и cron не устанавливаются: supervisor встроен в клиент."
 
+ROUTER_LAN_IP=""
+if which ndmc >/dev/null 2>&1; then
+    _home_info=$(ndmc -c "show interface Home" 2>&1 || true)
+    ROUTER_LAN_IP=$(echo "$_home_info" | grep -i "address:" | awk '{print $2}' | head -n 1)
+fi
+if [ -z "$ROUTER_LAN_IP" ]; then
+    ROUTER_LAN_IP=$(ip -4 addr show dev br0 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}' | head -n 1) # глушение-обосновано: интерфейса br0 может не быть на нестандартных прошивках
+fi
+if [ -z "$ROUTER_LAN_IP" ]; then
+    ROUTER_LAN_IP="192.168.1.1"
+fi
+
 echo ""
 echo "==========================================================="
 echo "     Установка успешно завершена / Installation Finished!"
 echo "==========================================================="
 echo ""
 echo "  1. Веб-панель доступна по адресу / Web panel URL:"
-echo "     http://192.168.1.1:$USER_PORT/fptn/"
+echo "     http://${ROUTER_LAN_IP}:$USER_PORT/fptn/"
 echo ""
 echo "  2. Запуск туннеля / How to start VPN:"
 echo "     - Откройте веб-панель / Open FPTN Web Panel."
-echo "     - Введите токен подписки / Enter subscription token."
-echo "     - Выберите сервер и нажмите 'Запустить' / Click 'Start'."
+echo "     - Проверьте сервер и нажмите 'Запустить' / Click 'Start'."
 echo ""
 echo "  3. Маршрутизация трафика / Traffic Routing:"
 echo "     - В Keenetic Web UI в разделе 'Приоритеты подключений'"
