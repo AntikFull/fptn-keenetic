@@ -74,6 +74,7 @@ if(UNIX)
   target_link_libraries("${PROJECT_NAME}-cli" PRIVATE Threads::Threads)
   if(NOT APPLE)
     target_link_libraries("${PROJECT_NAME}-cli" PRIVATE atomic)
+    target_link_options("${PROJECT_NAME}-cli" PRIVATE "-latomic")
   endif()
 endif()
 
