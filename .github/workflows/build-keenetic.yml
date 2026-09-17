@@ -27,7 +27,7 @@ jobs:
             cc: aarch64-linux-gnu-gcc
             cxx: aarch64-linux-gnu-g++
             strip: aarch64-linux-gnu-strip
-            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv8-a", "-mno-outline-atomics"]'
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-fcoroutines", "-march=armv8-a", "-mno-outline-atomics"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv8-a"
             linkflags: '["-pthread"]'
           - arch-name: armv7
@@ -36,7 +36,7 @@ jobs:
             cc: arm-linux-gnueabihf-gcc
             cxx: arm-linux-gnueabihf-g++
             strip: arm-linux-gnueabihf-strip
-            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-fcoroutines", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
             linkflags: '["-pthread", "-latomic"]'
           - arch-name: mipsel
@@ -45,7 +45,7 @@ jobs:
             cc: mipsel-linux-gnu-gcc
             cxx: mipsel-linux-gnu-g++
             strip: mipsel-linux-gnu-strip
-            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-march=mips32r2"]'
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-fcoroutines", "-march=mips32r2"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
             linkflags: '["-pthread", "-latomic"]'
 

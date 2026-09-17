@@ -14,6 +14,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include <sys/ioctl.h>
 #include <net/if.h>
 #include <linux/if_tun.h>
+#include <poll.h>
 #include <cstring>
 
 namespace fptn::common::network {
@@ -65,6 +66,22 @@ class LinuxTunDevice {
 
   int Write(const void* data, int size) {
     return tun_->write(const_cast<void*>(data), static_cast<std::size_t>(size));
+  }
+
+  bool WaitForReadable(int timeout_ms) {
+    if (!tun_) {
+      return false;
+    }
+    int fd = tun_->file_descriptor();
+    if (fd < 0) {
+      return false;
+    }
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int ret = ::poll(&pfd, 1, timeout_ms);
+    return ret > 0 && (pfd.revents & POLLIN);
   }
 
   // cppcheck-suppress functionStatic

@@ -257,6 +257,12 @@ class GenericTunInterface final
 
     IPPacketData buffer(mtu_size);
     while (running_) {
+#ifdef __linux__
+      // Ожидаем в ядре Linux через poll: 0% CPU в простое вместо 1000 wakeups/сек
+      if (!device_.WaitForReadable(100)) {
+        continue;
+      }
+#endif
       const int size = device_.Read(buffer.data(), mtu_size);
       if (size > 0) {
         auto packet = IPPacket::Parse(buffer.data(), size);
@@ -268,9 +274,12 @@ class GenericTunInterface final
             receive_rate_calculator_.Update(size);  // calculate rate
           }
         }
-      } else {
+      }
+#ifndef __linux__
+      else {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
+#endif
     }
   }
 

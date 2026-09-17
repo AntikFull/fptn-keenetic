@@ -88,6 +88,7 @@ class FPTN(ConanFile):
         "boost/*:without_url": True,
         "boost/*:without_type_erasure": True,
         "boost/*:without_wave": True,
+        "boost/*:without_cobalt": True,
         # --- Qt ---
         "qt/*:shared": True,
         "qt/*:openssl": False,
