@@ -20,7 +20,6 @@ class FPTN(ConanFile):
         "cpp-httplib/0.46.1",
         "fmt/12.1.0",
         "jwt-cpp/0.7.2",
-        "mimalloc/3.3.2",
         "nlohmann_json/3.12.0",
         "protobuf/5.29.3",
         "re2/20251105",
@@ -120,6 +119,7 @@ class FPTN(ConanFile):
 
     def requirements(self):
         self._register_local_recipe("boringssl", "openssl", "boringssl", True, False)
+        self._register_local_recipe("yaff", "yaff", "0.0.0", visible=False)
         if self.options.with_gui_client:
             self.requires("qt/6.7.3")
         if self.settings.os != "Windows":
@@ -127,10 +127,13 @@ class FPTN(ConanFile):
         if not self.options.build_only_fptn_lib:
             self.requires("libidn2/2.3.8")
             self.requires("prometheus-cpp/1.3.0")
+        if self._use_mimalloc():
+            self.requires("mimalloc/3.3.2")
 
     def build_requirements(self):
         self.build_requires("cmake/3.31.12", override=True)
         self.tool_requires("protobuf/5.29.3")
+        self.tool_requires("yaff/0.0.0@local/local")
 
         self.test_requires("gtest/1.17.0")
 
@@ -144,6 +147,8 @@ class FPTN(ConanFile):
             tc.variables["FPTN_BUILD_WITH_GUI_CLIENT"] = "True"
         if self.options.build_only_fptn_lib:
             tc.variables["FPTN_BUILD_ONLY_FPTN_LIB"] = "True"
+        if self._use_mimalloc():
+            tc.variables["FPTN_WITH_MIMALLOC"] = "True"
 
         # setup protobuf compiler
         protobuf_build = self.dependencies.build["protobuf"]
@@ -278,7 +283,11 @@ class FPTN(ConanFile):
     def export(self):
         copy(self, f"*", src=self.recipe_folder, dst=self.export_folder)
 
-    def _register_local_recipe(self, recipe, name, version, override=False, force=False):
+    def _use_mimalloc(self):
+        # mimalloc causes crashes on other platform
+        return self.settings.os != "Windows" and (self.settings.arch == "x86_64" or self.settings.os == "Macos")
+
+    def _register_local_recipe(self, recipe, name, version, override=False, force=False, visible=True):
         script_dir = os.path.dirname(os.path.abspath(__file__))
         recipe_rel_path = os.path.join(script_dir, ".conan", "recipes", recipe)
         subprocess.run(
@@ -293,4 +302,4 @@ class FPTN(ConanFile):
             ],
             check=True,
         )
-        self.requires(f"{name}/{version}@local/local", override=override, force=force)
+        self.requires(f"{name}/{version}@local/local", override=override, force=force, visible=visible)
