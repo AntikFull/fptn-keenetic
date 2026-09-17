@@ -14,7 +14,6 @@ target_link_libraries("${PROJECT_NAME}" PRIVATE OpenSSL::SSL OpenSSL::Crypto arg
 if(UNIX)
   target_link_libraries("${PROJECT_NAME}" PRIVATE Threads::Threads)
   if(NOT APPLE)
-    target_link_libraries("${PROJECT_NAME}" PRIVATE atomic)
-    target_link_options("${PROJECT_NAME}" PRIVATE "-latomic")
+    target_link_libraries("${PROJECT_NAME}" PRIVATE -Wl,--whole-archive atomic -Wl,--no-whole-archive)
   endif()
 endif()
