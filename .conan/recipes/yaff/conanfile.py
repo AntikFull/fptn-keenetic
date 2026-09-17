@@ -40,6 +40,13 @@ class YaffConan(ConanFile):
             "install(TARGETS yaff_protoc_plugin\n    EXPORT YaFFTargets\n",
             "install(TARGETS yaff_protoc_plugin\n",
         )
+        # Fix missing atomic link for abseil 64-bit atomics on 32-bit MIPS
+        replace_in_file(
+            self,
+            os.path.join(self.source_folder, "src", "protoc-plugin", "CMakeLists.txt"),
+            "protobuf::libprotoc",
+            "protobuf::libprotoc\n        $<$<PLATFORM_ID:Linux>:atomic>",
+        )
         # MSVC only forward-declares std::ostream via <string_view>, so the
         # operator<< in array.h fails with an incomplete type. Pull in <ostream>.
         replace_in_file(
