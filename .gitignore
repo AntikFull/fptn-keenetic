@@ -125,4 +125,5 @@ HANDOFF-ANTIGRAVITY.md
 # OPTIMIZATION_PLAN.md тоже не игнорируем: на него ссылается CLAUDE.md,
 # который в репозитории есть, иначе ссылка ведёт в никуда.
 
-
+release_binaries/
+*.zip
