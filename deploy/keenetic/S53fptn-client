@@ -133,14 +133,20 @@ configure_ndm() {
     _wait="${FPTN_NDM_WAIT:-90}"
     while [ "$_i" -lt "$_wait" ]; do
         if ip link show "$IFNAME" >/dev/null 2>&1; then
-            _ktun=$(echo "$IFNAME" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
-            ndmc -c "interface ${_ktun} ip global 50000" >/dev/null 2>&1
-            ndmc -c "access-list _WEBADMIN_${_ktun} permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0" >/dev/null 2>&1
-            ndmc -c "interface ${_ktun} ip access-group _WEBADMIN_${_ktun} in" >/dev/null 2>&1
-            ndmc -c "access-list _WEBADMIN_${_ktun} auto-delete" >/dev/null 2>&1
-            ndmc -c "interface ${_ktun} up" >/dev/null 2>&1
-            echo "$(date): ${_ktun} настроен встроенным init-файлом" >> "$_ndm_log"
-            return 0
+            _carrier=$(cat "/sys/class/net/$IFNAME/carrier" 2>/dev/null || echo "0")
+            if [ "$_carrier" = "1" ]; then
+                _ktun=$(echo "$IFNAME" | sed -E 's/opkgtun([0-9]+)/OpkgTun\1/i')
+                ndmc -c "interface ${_ktun} ip global 50000" >/dev/null 2>&1
+                ndmc -c "interface ${_ktun} ip mtu ${MTU:-1360}" >/dev/null 2>&1
+                ndmc -c "interface ${_ktun} ip tcp adjust-mss pmtu" >/dev/null 2>&1
+                ndmc -c "interface ${_ktun} security-level public" >/dev/null 2>&1
+                ndmc -c "access-list _WEBADMIN_${_ktun} permit ip 0.0.0.0 0.0.0.0 0.0.0.0 0.0.0.0" >/dev/null 2>&1
+                ndmc -c "interface ${_ktun} ip access-group _WEBADMIN_${_ktun} in" >/dev/null 2>&1
+                ndmc -c "access-list _WEBADMIN_${_ktun} auto-delete" >/dev/null 2>&1
+                ndmc -c "interface ${_ktun} up" >/dev/null 2>&1
+                echo "$(date): ${_ktun} настроен встроенным init-файлом (carrier=1)" >> "$_ndm_log"
+                return 0
+            fi
         fi
         _i=$((_i + 1))
         sleep 1

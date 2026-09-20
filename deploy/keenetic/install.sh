@@ -82,7 +82,7 @@ fi
 # Динамическое определение версии релиза из version.txt
 REMOTE_VER=$(curl -sL --connect-timeout 5 "${GITHUB_RAW_BASE}/deploy/keenetic/version.txt" 2>/dev/null | tr -d '\r\n')
 if [ -z "$REMOTE_VER" ]; then
-    REMOTE_VER="v1.3.0-keenetic"
+    REMOTE_VER="v1.3.2-keenetic"
 fi
 
 # Универсальная функция скачивания с каскадом прокси-зеркал / Download helper with mirror fallback
@@ -260,6 +260,10 @@ case "$RAW_ARCH" in
         ;;
     mips*el)
         ARCH_SUFFIX="mipsel"
+        # Проверяем, использует ли Entware репозиторий soft-float (например KN-1713 / MT7628)
+        if grep -Rqs 'mipselsf' /opt/etc/opkg.conf /opt/etc/opkg/*.conf 2>/dev/null; then # глушение-обосновано: часть файлов opkg может отсутствовать
+            ARCH_SUFFIX="mipselsf"
+        fi
         ;;
     *)
         echo "Ошибка: Неподдерживаемая архитектура / Error: Unsupported CPU architecture: $RAW_ARCH"
@@ -312,6 +316,15 @@ if [ "$DOWNLOAD_SUCCESS" != "yes" ] && [ ! -s "/opt/bin/fptn-client-cli" ]; then
 fi
 chmod +x /opt/bin/fptn-client-cli
 echo "$REMOTE_VER" > /opt/etc/fptn-version
+
+# Дымовая проверка запуска бинарника
+if /opt/bin/fptn-client-cli --help >/dev/null 2>&1; then # глушение-обосновано: тестовый запуск справки бинарника
+    echo "Бинарник успешно проверен / Binary verification passed."
+elif [ -r /opt/lib/ld.so.1 ] && /opt/lib/ld.so.1 --library-path /opt/lib /opt/bin/fptn-client-cli --help >/dev/null 2>&1; then # глушение-обосновано: тестовый запуск через loader
+    echo "Бинарник проверен через Entware loader / Binary verified with Entware loader."
+else
+    echo "Внимание: Прямой запуск бинарника завершился с предупреждением / Notice: Binary smoke check returned non-zero."
+fi
 
 # 5. Создание и настройка TUN-интерфейса в KeeneticOS / Register TUN Interface in KeeneticOS
 echo ""

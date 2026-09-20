@@ -1,4 +1,4 @@
-﻿# Журнал сессий и решений fptn-keenetic
+# Журнал сессий и решений fptn-keenetic
 
 **Репозиторий:** `AntikFull/fptn-keenetic`  
 **Назначение:** Клиент и инструменты FPTN VPN для роутеров Keenetic (Entware, MIPS MT7621AT / `mipsel-3.4_kn`, ARMv7, AArch64).
@@ -52,3 +52,28 @@
     - `fptn-client-cli-aarch64` (22 660 896 байт)
     - `fptn-passwd-aarch64` (3 033 808 байт)
   - Архив `fptn-keenetic-mipsel.zip` (13.19 МБ) доставлен в Telegram (message_id: 6066).
+
+---
+
+### Сессия 2. Интеграция нативного OpkgTun, поддержка MIPS soft-float, устранение Segfault и адаптация веб-панели (20.09.2026)
+
+* **Запрос:** Разбор отчетов и логов пользователей Kir (падение с Segmentation Fault на Keenetic Giga KN-1011 v1.3.1) и Константина Николаевича (наработки для soft-float MIPS MT7628 / KN-1713, связывание с OpkgTun). Устранение падений, интеграция патчей именованного TUN в `libtuntap`, добавление таргета `mipselsf`, восстановление списка серверов в веб-панели и поддержка точечной маршрутизации.
+* **Область:**
+  - `depends/patches/0003-libtuntap-prestart-name.patch`
+  - `depends/cmake/FetchLibTunTap.cmake`
+  - `src/common/network/tun/linux_tun_device.h`
+  - `src/fptn-client/utils/speed_estimator/speed_estimator.cpp`
+  - `.github/workflows/build-keenetic.yml`
+  - `deploy/keenetic/install.sh`
+  - `deploy/keenetic/S53fptn-client`
+  - `deploy/keenetic/index.php`
+* **Первопричины и решения:**
+  1. *Segmentation Fault при запуске v1.3.1:* В статическом бинарнике GCC 11 / glibc на MIPS32r2 вызов `jalr $t9` по адресу `ra = 0x00e047a8` в `FindServerByLogin` переходил на нулевой указатель `0x00000000` в GOT из-за слабого связывания pthread-функций в glibc. В `build-keenetic.yml` в флаги статической линковки добавлен `-Wl,--whole-archive -lpthread -latomic -Wl,--no-whole-archive`. В `speed_estimator.cpp` внедрен безопасный RNG и последовательный fallback без создания потоков при любых отказах threading.
+  2. *Несовместимость с OpkgTun:* В апстриме `libtuntap` открытие девайса жестко создавало `tun0`. Добавлен патч Константина Николаевича в `FetchLibTunTap.cmake` и обновлен `linux_tun_device.h` на вызов `std::make_unique<tuntap::tun>(name)`, позволяющий FPTN подключаться напрямую к `opkgtunN`.
+  3. *Поддержка MIPS soft-float:* Добавлен матричный таргет `mipselsf` с флагами `-msoft-float` для устройств MT7628 / KN-1713 (`mipselsf-k3.4`). В `install.sh` внедрено автоопределение soft-float фида Entware.
+  4. *Список серверов в веб-панели:* В `index.php` добавлен прямой декодер токенов `fptnb:` (Brotli) и запуск через dynamic loader `/opt/lib/ld.so.1`, если прямой вызов CLI возвращает ошибку.
+  5. *Точечная маршрутизация:* В `S53fptn-client` добавлено ожидание `carrier=1` перед финальной регистрацией параметров OpkgTun в NDM без затирания маршрутов пользователя. В `install.sh` перехват default route оставлен строго опциональным.
+* **Доказательства верификации:**
+  - Синтаксис shell-скриптов: `sh -n deploy/keenetic/install.sh` (код 0), `sh -n deploy/keenetic/S53fptn-client` (код 0).
+  - Сводный Pre-Flight (`preflight.cmd`): все проверки (стиль, секреты, переносы строк LF, права 0755, скобки, типографика) успешно пройдены (код возврата 0).
+

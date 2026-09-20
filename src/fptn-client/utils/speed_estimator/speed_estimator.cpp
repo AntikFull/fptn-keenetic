@@ -7,6 +7,7 @@ Distributed under the MIT License (https://opensource.org/licenses/MIT)
 #include "fptn-client/utils/speed_estimator/speed_estimator.h"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -31,6 +32,48 @@ using fptn::utils::speed_estimator::ServerInfo;
 constexpr std::uint64_t kMaxTimeout = UINT64_MAX;
 
 namespace fptn::utils::speed_estimator {
+
+namespace {
+
+// Безопасная инициализация генератора псевдослучайных чисел
+std::mt19937 CreateSafeRng() {
+  std::uint32_t seed = static_cast<std::uint32_t>(
+      std::chrono::system_clock::now().time_since_epoch().count());
+  try {
+    std::random_device rd;
+    seed ^= rd();
+  } catch (...) { // глушение-обосновано: fallback на системное время при сбоях random_device в урезанных окружениях
+  }
+  return std::mt19937(seed);
+}
+
+// Одиночная проверка авторизации без создания потоков
+std::optional<LoginResult> TryLoginSingleServer(
+    const ServerInfo& server,
+    const std::string& sni,
+    int timeout_sec,
+    fptn::protocol::https::CensorshipStrategy censorship_strategy) {
+  try {
+    const std::string body =
+        fmt::format(R"({{ "username": "{}", "password": "{}" }})",
+            server.username, server.password);
+    ApiClient cli(server.host, server.port, sni, server.md5_fingerprint,
+        censorship_strategy);
+    const auto resp = cli.Post(
+        common::api::kApiLoginUrl, body, "application/json", timeout_sec);
+    if (resp.code == 200) {
+      const auto msg = resp.Json();
+      if (msg.contains("access_token")) {
+        return LoginResult{.server = server,
+            .access_token = msg["access_token"].get<std::string>()};
+      }
+    }
+  } catch (...) { // глушение-обосновано: сервер может быть временно недоступен
+  }
+  return std::nullopt;
+}
+
+}  // namespace
 
 std::uint64_t GetDownloadTimeMs(const ServerInfo& server,
     const std::string& sni,
@@ -66,8 +109,7 @@ ServerInfo FindFastestServer(const std::string& sni,
   }
   // Перемешиваем серверы для равномерного распределения нагрузки
   std::vector<ServerInfo> shuffled_servers = servers;
-  std::random_device rd;
-  std::mt19937 generator(rd());
+  auto generator = CreateSafeRng();
   std::ranges::shuffle(shuffled_servers, generator);
   const std::size_t count =
       std::min<std::size_t>(shuffled_servers.size(), 4);
@@ -86,45 +128,66 @@ ServerInfo FindFastestServer(const std::string& sni,
 
   std::vector<std::thread> workers;
   workers.reserve(selected_servers.size());
+  bool multithread_ok = true;
 
-  for (const auto& server : selected_servers) {
-    workers.emplace_back([state, server, sni, timeout_sec, censorship_strategy]() {
-      std::uint64_t ms = kMaxTimeout;
-      try {
-        ms = GetDownloadTimeMs(server, sni, timeout_sec, server.md5_fingerprint,
-            censorship_strategy);
-      } catch (...) {  // NOLINT
-      }
-      {
-        const std::scoped_lock<std::mutex> lock(state->mtx);
-        if (ms != kMaxTimeout && !state->first_server.has_value()) {
-          state->first_server = server;
+  try {
+    for (const auto& server : selected_servers) {
+      workers.emplace_back([state, server, sni, timeout_sec, censorship_strategy]() {
+        std::uint64_t ms = kMaxTimeout;
+        try {
+          ms = GetDownloadTimeMs(server, sni, timeout_sec, server.md5_fingerprint,
+              censorship_strategy);
+        } catch (...) { // глушение-обосновано: игнорируем ошибку единичного сервера
         }
-        ++state->completed;
+        {
+          const std::scoped_lock<std::mutex> lock(state->mtx);
+          if (ms != kMaxTimeout && !state->first_server.has_value()) {
+            state->first_server = server;
+          }
+          ++state->completed;
+        }
+        state->cv.notify_one();
+      });
+    }
+
+    {
+      std::unique_lock<std::mutex> lock(state->mtx);
+      state->cv.wait_for(lock, std::chrono::seconds(timeout_sec + 2), [&state] {
+        return state->first_server.has_value() || state->completed == state->total;
+      });
+    }
+
+    for (auto& w : workers) {
+      if (w.joinable()) {
+        w.join();
       }
-      state->cv.notify_one();
-    });
-  }
-
-  {
-    std::unique_lock<std::mutex> lock(state->mtx);
-    state->cv.wait_for(lock, std::chrono::seconds(timeout_sec + 2), [&state] {
-      return state->first_server.has_value() || state->completed == state->total;
-    });
-  }
-
-  // Дожидаемся завершения потоков для корректного освобождения ресурсов
-  for (auto& w : workers) {
-    if (w.joinable()) {
-      w.join();
+    }
+  } catch (const std::exception& ex) {
+    SPDLOG_WARN("Multithreaded ping failed ({}), falling back to sequential", ex.what());
+    multithread_ok = false;
+    for (auto& w : workers) {
+      if (w.joinable()) {
+        w.join();
+      }
     }
   }
 
-  if (!state->first_server.has_value()) {
-    throw std::runtime_error("All servers unavailable!");
+  // Последовательный fallback, если многопоточность дала сбой или ни один сервер не ответил
+  if (!multithread_ok || !state->first_server.has_value()) {
+    for (const auto& server : selected_servers) {
+      const auto ms = GetDownloadTimeMs(server, sni, timeout_sec,
+          server.md5_fingerprint, censorship_strategy);
+      if (ms != kMaxTimeout) {
+        return server;
+      }
+    }
   }
 
-  return *state->first_server;
+  if (state->first_server.has_value()) {
+    return *state->first_server;
+  }
+
+  throw std::runtime_error("All servers unavailable!");
 }
 
 std::optional<LoginResult> FindServerByLogin(const std::string& sni,
@@ -135,8 +198,7 @@ std::optional<LoginResult> FindServerByLogin(const std::string& sni,
     return std::nullopt;
   }
   std::vector<ServerInfo> shuffled_servers = servers;
-  std::random_device rd;
-  std::mt19937 generator(rd());
+  auto generator = CreateSafeRng();
   std::ranges::shuffle(shuffled_servers, generator);
   const std::size_t count =
       std::min<std::size_t>(shuffled_servers.size(), 4);
@@ -155,49 +217,52 @@ std::optional<LoginResult> FindServerByLogin(const std::string& sni,
 
   std::vector<std::thread> workers;
   workers.reserve(selected_servers.size());
+  bool multithread_ok = true;
 
-  for (const auto& server : selected_servers) {
-    workers.emplace_back([state, server, sni, timeout_sec, censorship_strategy]() {
-      std::optional<LoginResult> local;
-      try {
-        const std::string body =
-            fmt::format(R"({{ "username": "{}", "password": "{}" }})",
-                server.username, server.password);
-        ApiClient cli(server.host, server.port, sni, server.md5_fingerprint,
-            censorship_strategy);
-        const auto resp = cli.Post(
-            common::api::kApiLoginUrl, body, "application/json", timeout_sec);
-        if (resp.code == 200) {
-          const auto msg = resp.Json();
-          if (msg.contains("access_token")) {
-            local = LoginResult{.server = server,
-                .access_token = msg["access_token"].get<std::string>()};
+  try {
+    for (const auto& server : selected_servers) {
+      workers.emplace_back([state, server, sni, timeout_sec, censorship_strategy]() {
+        auto local = TryLoginSingleServer(server, sni, timeout_sec, censorship_strategy);
+        {
+          const std::scoped_lock<std::mutex> lock(state->mtx);
+          if (local && !state->result.has_value()) {
+            state->result = std::move(local);
           }
+          ++state->completed;
         }
-      } catch (...) {  // NOLINT
+        state->cv.notify_one();
+      });
+    }
+
+    {
+      std::unique_lock<std::mutex> lock(state->mtx);
+      state->cv.wait_for(lock, std::chrono::seconds(timeout_sec + 2), [&state] {
+        return state->result.has_value() || state->completed == state->total;
+      });
+    }
+
+    for (auto& w : workers) {
+      if (w.joinable()) {
+        w.join();
       }
-      {
-        const std::scoped_lock<std::mutex> lock(state->mtx);
-        if (local && !state->result.has_value()) {
-          state->result = std::move(local);
-        }
-        ++state->completed;
+    }
+  } catch (const std::exception& ex) {
+    SPDLOG_WARN("Multithreaded login failed ({}), falling back to sequential", ex.what());
+    multithread_ok = false;
+    for (auto& w : workers) {
+      if (w.joinable()) {
+        w.join();
       }
-      state->cv.notify_one();
-    });
+    }
   }
 
-  {
-    std::unique_lock<std::mutex> lock(state->mtx);
-    state->cv.wait_for(lock, std::chrono::seconds(timeout_sec + 2), [&state] {
-      return state->result.has_value() || state->completed == state->total;
-    });
-  }
-
-  // Дожидаемся завершения потоков для предотвращения утечек стека и гонок
-  for (auto& w : workers) {
-    if (w.joinable()) {
-      w.join();
+  // Последовательный fallback без потоков
+  if (!multithread_ok || !state->result.has_value()) {
+    for (const auto& server : selected_servers) {
+      auto res = TryLoginSingleServer(server, sni, timeout_sec, censorship_strategy);
+      if (res.has_value()) {
+        return res;
+      }
     }
   }
 

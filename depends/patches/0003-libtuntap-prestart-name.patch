@@ -1,0 +1,66 @@
+diff --git a/bindings/cpp/tuntap++.hh b/bindings/cpp/tuntap++.hh
+--- a/bindings/cpp/tuntap++.hh
++++ b/bindings/cpp/tuntap++.hh
+@@ -13,5 +13,6 @@ class tun {
+  public:
+   tun();
++  explicit tun(std::string const &name);
+   ~tun();
+ 
+   tun(tun &&);
+diff --git a/bindings/cpp/tuntap++.cc b/bindings/cpp/tuntap++.cc
+--- a/bindings/cpp/tuntap++.cc
++++ b/bindings/cpp/tuntap++.cc
+@@ -13,6 +13,18 @@ tun::tun()
+     }
+ }
+ 
++tun::tun(std::string const &name)
++    : _dev{tuntap_init()}, _started{true}
++{
++    if (tuntap_set_ifname(_dev, name.c_str()) == -1) {
++        throw std::runtime_error("tuntap_set_ifname failed");
++    }
++
++    if (tuntap_start(_dev, TUNTAP_MODE_TUNNEL, TUNTAP_ID_ANY) == -1) {
++        throw std::runtime_error("tuntap_start failed");
++    }
++}
++
+ tun::~tun()
+ {
+     if (_started) {
+diff --git a/tuntap-unix.c b/tuntap-unix.c
+--- a/tuntap-unix.c
++++ b/tuntap-unix.c
+@@ -135,6 +135,13 @@ tuntap_set_ifname(struct device *dev, const char *ifname) {
+             return -1;
+     }
+ 
++    /* Allow the exact interface name to be selected before tuntap_start(). */
++    if (dev->tun_fd == -1) {
++            (void)memset(dev->if_name, 0, IF_NAMESIZE);
++            (void)strncpy(dev->if_name, ifname, len);
++            return 0;
++    }
++
+     if (tuntap_sys_set_ifname(dev, ifname, len) == -1) {
+             return -1;
+     }
+diff --git a/tuntap-unix-linux.c b/tuntap-unix-linux.c
+--- a/tuntap-unix-linux.c
++++ b/tuntap-unix-linux.c
+@@ -91,6 +91,13 @@ tuntap_sys_start(struct device *dev, int mode, int tun) {
+             /* Save interface name *after* SIOCGIFFLAGS */
+     }
+ 
++    /* Attach to an exact pre-existing TUN such as Keenetic opkgtun1. */
++    if (tun == TUNTAP_ID_ANY && dev->if_name[0] != '\0') {
++            (void)memset(ifr.ifr_name, 0, sizeof ifr.ifr_name);
++            (void)strncpy(ifr.ifr_name, dev->if_name,
++                sizeof ifr.ifr_name - 1);
++    }
++
+     /* Configure the interface */
+     if (ioctl(fd, TUNSETIFF, &ifr) == -1) {
+             tuntap_log(TUNTAP_LOG_ERR, "Can't set interface name");

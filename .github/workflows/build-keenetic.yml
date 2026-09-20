@@ -30,7 +30,7 @@ jobs:
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-fcoroutines", "-march=armv8-a", "-mno-outline-atomics"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv8-a"
             linkflags: '["-pthread"]'
-            cmake-linker-flags: "-static -pthread"
+            cmake-linker-flags: "-static -pthread -Wl,--whole-archive -lpthread -Wl,--no-whole-archive"
           - arch-name: armv7
             conan-arch: armv7
             apt-packages: gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
@@ -40,7 +40,7 @@ jobs:
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-fcoroutines", "-march=armv7-a", "-mfpu=vfpv3-d16", "-mfloat-abi=hard"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard"
             linkflags: '["-pthread", "-latomic"]'
-            cmake-linker-flags: "-static -pthread -latomic"
+            cmake-linker-flags: "-static -pthread -Wl,--whole-archive -lpthread -latomic -Wl,--no-whole-archive"
           - arch-name: mipsel
             conan-arch: mips
             apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
@@ -50,7 +50,17 @@ jobs:
             flags: '["-DOPENSSL_PTHREADS", "-pthread", "-fcoroutines", "-march=mips32r2"]'
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
             linkflags: '["-pthread", "-latomic"]'
-            cmake-linker-flags: "-static -pthread -Wl,--whole-archive -latomic -Wl,--no-whole-archive"
+            cmake-linker-flags: "-static -pthread -Wl,--whole-archive -lpthread -latomic -Wl,--no-whole-archive"
+          - arch-name: mipselsf
+            conan-arch: mips
+            apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
+            cc: mipsel-linux-gnu-gcc
+            cxx: mipsel-linux-gnu-g++
+            strip: mipsel-linux-gnu-strip
+            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-fcoroutines", "-march=mips32r2", "-msoft-float"]'
+            asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2 -msoft-float"
+            linkflags: '["-pthread", "-latomic", "-msoft-float"]'
+            cmake-linker-flags: "-static -pthread -Wl,--whole-archive -lpthread -latomic -Wl,--no-whole-archive -msoft-float"
 
     steps:
       - name: Checkout code
@@ -120,7 +130,7 @@ jobs:
           cmake .. -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXE_LINKER_FLAGS="${{ matrix.cmake-linker-flags }}"
           if ! cmake --build . --config Release --target fptn-client-cli -j$(nproc) -- VERBOSE=1; then
             echo "=== CONTENT OF link.txt ==="
-            cat src/fptn-client/CMakeFiles/fptn-client-cli.dir/link.txt || true
+            cat src/fptn-client/CMakeFiles/fptn-client-cli.dir/link.txt || true # глушение-обосновано: файл линковщика может отсутствовать при раннем падении cmake
             exit 1
           fi
           if ! cmake --build . --config Release --target fptn-passwd -j$(nproc) -- VERBOSE=1; then

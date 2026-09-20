@@ -17,7 +17,7 @@ session_name('FPTN_SESS');
 session_start();
 header('Content-Type: text/html; charset=utf-8');
 
-define('CURRENT_VERSION', 'v1.3.1-keenetic');
+define('CURRENT_VERSION', 'v1.3.2-keenetic');
 
 putenv("PATH=/opt/sbin:/opt/bin:/opt/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
 
@@ -31,19 +31,48 @@ function parse_fptn_token_direct($token) {
     if (empty($token)) {
         return null;
     }
+    $is_brotli = (stripos($token, 'fptnb:') === 0 || stripos($token, 'fptnb//') === 0);
     // Удаляем стандартные URI-схемы и спецсимволы
-    $clean = preg_replace('/^(fptn:\/\/|fptn:)/i', '', $token);
+    $clean = preg_replace('/^(fptnb:\/\/|fptnb:|fptn:\/\/|fptn:)/i', '', $token);
     $clean = preg_replace('/[\s\r\n\t=]+/', '', $clean);
     
     $decoded = base64_decode($clean, true);
     if ($decoded !== false) {
-        $json = json_decode($decoded, true);
-        if ($json && !empty($json['servers']) && is_array($json['servers'])) {
-            return [
-                'service_name' => $json['service_name'] ?? 'FPTN',
-                'username' => $json['username'] ?? '',
-                'servers' => $json['servers']
-            ];
+        $decompressed = false;
+        if ($is_brotli) {
+            if (function_exists('brotli_uncompress')) {
+                $decompressed = @brotli_uncompress($decoded);
+            }
+            if ($decompressed === false) {
+                // Попытка распаковки через системную утилиту brotli
+                $descriptors = [
+                    0 => ['pipe', 'r'],
+                    1 => ['pipe', 'w'],
+                    2 => ['pipe', 'w']
+                ];
+                $process = @proc_open('brotli -d -c 2>/dev/null', $descriptors, $pipes);
+                if (is_resource($process)) {
+                    fwrite($pipes[0], $decoded);
+                    fclose($pipes[0]);
+                    $decompressed = stream_get_contents($pipes[1]);
+                    fclose($pipes[1]);
+                    fclose($pipes[2]);
+                    proc_close($process);
+                }
+            }
+        } else {
+            $decompressed = $decoded;
+        }
+
+        if ($decompressed) {
+            $json = json_decode($decompressed, true);
+            if ($json && !empty($json['servers']) && is_array($json['servers'])) {
+                return [
+                    'service_name' => $json['service_name'] ?? 'FPTN',
+                    'username' => $json['username'] ?? '',
+                    'servers' => $json['servers']
+                ];
+            }
         }
     }
     return null;
@@ -54,19 +83,25 @@ function parse_token_via_cli($token) {
     if (!file_exists($cli_path) || !is_executable($cli_path)) {
         return null;
     }
-    $cmd = escapeshellcmd($cli_path) . " --access-token " . escapeshellarg($token) . " --show-servers 2>/dev/null";
-    $output = [];
-    $ret = 0;
-    exec($cmd, $output, $ret);
-    if ($ret === 0 && !empty($output)) {
-        $raw = implode("\n", $output);
-        $start = strpos($raw, '{');
-        $end = strrpos($raw, '}');
-        if ($start !== false && $end !== false && $end > $start) {
-            $json_str = substr($raw, $start, $end - $start + 1);
-            $parsed = json_decode($json_str, true);
-            if ($parsed && !empty($parsed['servers'])) {
-                return $parsed;
+    // Пробуем прямой вызов CLI, а при необходимости через dynamic loader Entware
+    $commands = [
+        escapeshellcmd($cli_path) . " --access-token " . escapeshellarg($token) . " --show-servers 2>/dev/null",
+        "/opt/lib/ld.so.1 --library-path /opt/lib " . escapeshellcmd($cli_path) . " --access-token " . escapeshellarg($token) . " --show-servers 2>/dev/null"
+    ];
+    foreach ($commands as $cmd) {
+        $output = [];
+        $ret = 0;
+        @exec($cmd, $output, $ret);
+        if ($ret === 0 && !empty($output)) {
+            $raw = implode("\n", $output);
+            $start = strpos($raw, '{');
+            $end = strrpos($raw, '}');
+            if ($start !== false && $end !== false && $end > $start) {
+                $json_str = substr($raw, $start, $end - $start + 1);
+                $parsed = json_decode($json_str, true);
+                if ($parsed && !empty($parsed['servers'])) {
+                    return $parsed;
+                }
             }
         }
     }

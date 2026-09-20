@@ -22,8 +22,7 @@ namespace fptn::common::network {
 class LinuxTunDevice {
  public:
   bool Open(const std::string& name) {
-    tun_ = std::make_unique<tuntap::tun>();
-    tun_->name(name);
+    tun_ = std::make_unique<tuntap::tun>(name);
     name_ = tun_->name();
     return true;
   }
