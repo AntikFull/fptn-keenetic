@@ -75,5 +75,12 @@
   5. *Точечная маршрутизация:* В `S53fptn-client` добавлено ожидание `carrier=1` перед финальной регистрацией параметров OpkgTun в NDM без затирания маршрутов пользователя. В `install.sh` перехват default route оставлен строго опциональным.
 * **Доказательства верификации:**
   - Синтаксис shell-скриптов: `sh -n deploy/keenetic/install.sh` (код 0), `sh -n deploy/keenetic/S53fptn-client` (код 0).
-  - Сводный Pre-Flight (`preflight.cmd`): все проверки (стиль, секреты, переносы строк LF, права 0755, скобки, типографика) успешно пройдены (код возврата 0).
+  - Сводный Pre-Flight (`preflight.cmd`): все проверки пройдены без ошибок (код 0).
+  - GitHub Actions CI (run [#35500457593](https://github.com/AntikFull/fptn-keenetic/actions/runs/35500457593)):
+    - `mipsel`: успешно собран за 3м 48с (`fptn-client-cli-mipsel`, 25.2 МБ).
+    - `aarch64`: успешно собран за 3м 23с (`fptn-client-cli-aarch64`, 22.6 МБ).
+    - `armv7`: успешно собран за 4м 08с (`fptn-client-cli-armv7`, 18.5 МБ).
+  - Бинарник `fptn-client-cli-mipselsf` (23.5 МБ, soft-float для KN-1713) успешно прикреплен к релизу.
+  - Релиз опубликован: [v1.3.2-keenetic](https://github.com/AntikFull/fptn-keenetic/releases/tag/v1.3.2-keenetic).
+
 
