@@ -51,16 +51,6 @@ jobs:
             asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2"
             linkflags: '["-pthread", "-latomic"]'
             cmake-linker-flags: "-static -pthread -Wl,--whole-archive -lpthread -latomic -Wl,--no-whole-archive"
-          - arch-name: mipselsf
-            conan-arch: mips
-            apt-packages: gcc-mipsel-linux-gnu g++-mipsel-linux-gnu
-            cc: mipsel-linux-gnu-gcc
-            cxx: mipsel-linux-gnu-g++
-            strip: mipsel-linux-gnu-strip
-            flags: '["-DOPENSSL_PTHREADS", "-pthread", "-fcoroutines", "-march=mips32r2", "-msoft-float"]'
-            asmflags: "-DOPENSSL_PTHREADS -pthread -march=mips32r2 -msoft-float"
-            linkflags: '["-pthread", "-latomic", "-msoft-float"]'
-            cmake-linker-flags: "-static -pthread -Wl,--whole-archive -lpthread -latomic -Wl,--no-whole-archive -msoft-float"
 
     steps:
       - name: Checkout code
